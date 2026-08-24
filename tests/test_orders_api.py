@@ -232,3 +232,31 @@ def test_order_exposes_credit_authorisation_ids(client, rows):
     rows["o1"] = _order(gwsr="14563813", auth_code="R05013")
     d = client.get("/v1/orders/o1", headers=H).json()
     assert d["gwsr"] == "14563813" and d["auth_code"] == "R05013"
+
+
+def test_refresh_never_zeroes_out_known_totals(client, rows, monkeypatch):
+    """對帳讀不到欄位時要維持原狀，不能寫 0。
+
+    實測踩過的：綠界的查詢回應被誤判成無結構字串，`TotalSuccessTimes`
+    讀不到就被寫成 0，**把回呼存下來的正確數字蓋掉**。
+    對帳把資料弄丟，比不對帳更糟。
+    """
+    from app.routers import subscriptions as sub_router
+    saved = {}
+    monkeypatch.setattr(sub_router.store, "get",
+                        lambda cid, sid: {"id": "s1", "caller_id": "c1",
+                                          "reference_id": "r", "merchant_trade_no": "S1",
+                                          "period_amount": 5, "period_type": "M",
+                                          "frequency": 1, "exec_times": 12,
+                                          "status": "active", "total_success_times": 3,
+                                          "total_success_amount": 15,
+                                          "created_at": None, "checkout_token": None})
+    monkeypatch.setattr(sub_router.store, "charges", lambda sid: [])
+    monkeypatch.setattr(sub_router.store, "set_totals",
+                        lambda sid, t, a: saved.update(times=t, amount=a))
+    # 綠界只回了 RtnCode，沒有 TotalSuccessTimes
+    monkeypatch.setattr(sub_router.ecsub, "query", lambda tn: {"RtnCode": "1"})
+
+    d = client.get("/v1/subscriptions/s1?refresh=true", headers=H).json()
+    assert saved == {}                       # 完全沒去改
+    assert d["total_success_times"] == 3     # 原本的數字還在

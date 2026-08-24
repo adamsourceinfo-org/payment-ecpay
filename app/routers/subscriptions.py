@@ -125,10 +125,14 @@ def get_subscription(sub_id: str, refresh: bool = False,
             data = ecsub.query(row["merchant_trade_no"])
         except ECPayError as e:
             raise upstream_error(e)
-        times = int(data.get("TotalSuccessTimes") or 0)
-        total = int(data.get("TotalSuccessAmount") or 0)
-        if times != row["total_success_times"] or total != row["total_success_amount"]:
-            row = store.set_totals(row["id"], times, total)
+        # **只有綠界真的回了這些欄位才更新。** 讀不到就當作沒查到，
+        # 絕不能用 0 覆蓋回呼存下來的正確數字 —— 對帳把資料弄丟比不對帳更糟。
+        if "TotalSuccessTimes" in data:
+            times = int(data.get("TotalSuccessTimes") or 0)
+            total = int(data.get("TotalSuccessAmount") or 0)
+            if (times, total) != (row["total_success_times"],
+                                  row["total_success_amount"]):
+                row = store.set_totals(row["id"], times, total)
         # 綠界的 ExecLog 是每期扣款明細，補進本地（gwsr 去重，重跑安全）
         for log in (data.get("ExecLog") or []):
             gwsr = str(log.get("gwsr") or "")

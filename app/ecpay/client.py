@@ -28,11 +28,19 @@ def signed(params: dict) -> dict:
 
 
 def _parse(resp: httpx.Response) -> dict:
-    """綠界的回應有三種形狀：JSON、form-urlencoded、以及純錯誤字串。"""
-    ctype = resp.headers.get("content-type", "")
+    """綠界的回應有三種形狀：JSON、form-urlencoded、以及純錯誤字串。
+
+    **不要相信 Content-Type。** `QueryCreditCardPeriodInfo` 回的是 JSON，
+    但標頭寫 `text/html; charset=utf-8` —— 照 Content-Type 判斷會把整包
+    當成無結構字串，欄位全部讀不到。實測踩過：對帳因此把 `TotalSuccessTimes`
+    寫成 0，**蓋掉回呼存下的正確資料**。所以改成看內容長什麼樣子。
+    """
     text = resp.text.strip()
-    if "json" in ctype:
-        return json.loads(text)
+    if text[:1] in ("{", "["):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
     if "=" in text:
         return dict(parse_qsl(text, keep_blank_values=True))
     # 例如 "Error: xxx" —— 沒有結構，原文帶回去比硬套格式有用
