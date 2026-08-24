@@ -59,8 +59,12 @@ def run_checks():
     print("\n【健康檢查】")
     s, b = call("GET", "/health")
     check("/health 回 200", s == 200, (s, b))
-    check("db 由 DB 自己回答 server_user",
-          b.get("db", {}).get("server_user", "").startswith("run-runtime@"), b.get("db"))
+    # 不寫死執行身分的名字（它從 run-runtime 換成過 run-payment-ecpay）——
+    # 這裡真正要證明的是「連到的是自己這個環境的 DB」，所以驗專案。
+    su = b.get("db", {}).get("server_user", "")
+    check("db 由 DB 自己回答 server_user 且屬於本環境",
+          su.startswith("run-") and su.endswith(f"@adamsourceinfo-{b.get('env')}.iam"),
+          b.get("db"))
     check("db.database 正確", b.get("db", {}).get("database") == "payment_ecpay")
     check("憑證已載入", b.get("ecpay", {}).get("credentials") == "loaded")
     check("健康檢查不外洩金鑰",
