@@ -31,6 +31,9 @@ class Settings:
     hash_key: str
     hash_iv: str
     allowed_payments: frozenset
+    # 付款方式 → 最低金額。綠界**沒有公布**這些數字（在合約與費率頁、依商店而異），
+    # 所以不寫死在程式裡，由每個環境自己量、自己設。沒設就不擋。
+    min_amounts: dict
     timeout_seconds: float
     public_base_url: Optional[str]
     db_pool_max: int
@@ -101,6 +104,18 @@ def load_settings() -> Settings:
             f"ECPAY_ALLOWED_PAYMENTS 有綠界不認得的值：{sorted(unknown)}；"
             f"可用：{sorted(KNOWN_PAYMENTS)}")
 
+    mins = {}
+    for item in os.environ.get("ECPAY_MIN_AMOUNTS", "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        method, _, value = item.partition(":")
+        method = method.strip()
+        if method not in KNOWN_PAYMENTS or not value.strip().isdigit():
+            raise RuntimeError(
+                f"ECPAY_MIN_AMOUNTS 格式錯誤：{item!r}，要 <付款方式>:<整數>")
+        mins[method] = int(value)
+
     return Settings(
         app_env=os.environ.get("APP_ENV", "unknown"),
         app_version=os.environ.get("APP_VERSION", "(dev build)"),
@@ -111,6 +126,7 @@ def load_settings() -> Settings:
         hash_key=_required("ECPAY_HASH_KEY"),
         hash_iv=_required("ECPAY_HASH_IV"),
         allowed_payments=payments,
+        min_amounts=mins,
         timeout_seconds=float(os.environ.get("ECPAY_TIMEOUT_SECONDS", "10")),
         # 沒設就由請求自身的 scheme+host 推導 —— 這樣第一次部署不會卡在
         # 「還沒有網址就填不了回呼網址」的雞生蛋。

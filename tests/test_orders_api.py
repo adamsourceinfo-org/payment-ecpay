@@ -127,3 +127,40 @@ def test_other_callers_order_is_404_not_403(client, rows):
 
 def test_no_api_key_is_401(client):
     assert client.get("/v1/orders/o1").status_code == 401
+
+
+def test_rejects_amount_below_method_floor(client):
+    """各付款方式有金額下限，綠界**沒有公布**這些數字（實測：超商代碼 27、
+    超商條碼 16、ATM 2、信用卡無下限）。不擋的話 caller 拿得到 checkout_url，
+    但使用者到綠界只會看到「因交易金額低於下限」的死路，訂單永遠停在 created。"""
+    r = client.post("/v1/orders", headers=H, json={
+        "reference_id": "r-cvs", "amount": 13, "item_name": "x",
+        "choose_payment": "CVS"})
+    assert r.status_code == 400
+    d = r.json()["detail"]
+    assert d["field"] == "amount" and "27" in d["message"]
+
+
+def test_allows_amount_at_the_floor(client, monkeypatch):
+    """邊界值本身要放行 —— 實測 27 可以、26 不行。
+
+    讓 get_by_reference 回既有訂單，走冪等那條路就能證明「通過了驗證」
+    而不必真的接資料庫。
+    """
+    monkeypatch.setattr(router_mod.store, "get_by_reference",
+                        lambda cid, ref: _order(choose_payment="CVS"))
+    r = client.post("/v1/orders", headers=H, json={
+        "reference_id": "r-cvs2", "amount": 27, "item_name": "x",
+        "choose_payment": "CVS"})
+    assert r.status_code == 200
+
+
+def test_no_floor_configured_means_no_check(client, monkeypatch, fake_settings):
+    """沒設定就不擋 —— 預設行為不變，也不會因為猜錯數字誤擋合法訂單。"""
+    fake_settings.min_amounts = {}
+    monkeypatch.setattr(router_mod.store, "get_by_reference",
+                        lambda cid, ref: _order(choose_payment="CVS"))
+    r = client.post("/v1/orders", headers=H, json={
+        "reference_id": "r-any", "amount": 1, "item_name": "x",
+        "choose_payment": "CVS"})
+    assert r.status_code == 200

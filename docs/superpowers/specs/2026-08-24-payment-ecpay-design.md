@@ -204,6 +204,19 @@ Python 的 `quote_plus` 與 .NET `HttpUtility.UrlEncode` 的差異必須修正�
 `0`、負數、小數、非數字一律 400，錯誤帶 `{"error","field","message"}` 指名欄位。
 定期定額的 `TotalAmount` 必須**等於** `PeriodAmount`（綠界規定）。
 
+### 付款方式的金額下限
+
+各付款方式有最低金額，而綠界的**開發文件沒有公布**這些數字 ——
+它們在合約與費率頁，而且依商店而異。所以**不寫死在程式裡**，
+由 `ECPAY_MIN_AMOUNTS`（`<付款方式>:<整數>` 逗號分隔）逐環境設定，沒設就不擋。
+
+不擋的後果是實際踩過的：caller 拿得到 `checkout_url`，但使用者到綠界只會看到
+「因交易金額低於下限，本次交易未提供…」的死路，而訂單永遠停在 `created`。
+
+dev 的值是對測試特店 3002607 **實測**出來的（`scripts/probe-limits.py`，
+二分搜尋並確認邊界）：`ATM:2, WebATM:2, CVS:27, BARCODE:16`，信用卡無下限。
+prod 刻意留空 —— 填錯的方向是「誤擋合法訂單」，比不擋更糟。
+
 ### 定期定額參數
 
 `PeriodType` ∈ `D`(1–365) / `M`(1–12) / `Y`(1)；`Frequency` 依型別限制；

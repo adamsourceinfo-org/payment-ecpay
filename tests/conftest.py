@@ -24,6 +24,8 @@ class FakeSettings:
     hash_key = TEST_KEY
     hash_iv = TEST_IV
     allowed_payments = frozenset({"Credit", "WebATM", "ATM", "CVS", "BARCODE"})
+    # 測試特店實測值（見 scripts/probe-limits.py）
+    min_amounts = {"ATM": 2, "CVS": 27, "BARCODE": 16, "WebATM": 2}
     timeout_seconds = 5.0
     public_base_url = None
     db_pool_max = 3

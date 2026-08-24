@@ -60,6 +60,14 @@ def create_order(body: OrderCreate, request: Request,
             f"這個環境不支援 {payment!r}，可用：{sorted(s.allowed_payments)}",
             field="choose_payment"))
 
+    # 各付款方式有金額下限（綠界不公布，依商店而異，由設定提供）。
+    # 不擋的話 caller 拿得到 checkout_url，但使用者到綠界會看到
+    # 「因交易金額低於下限，本次交易未提供…」的死路，而訂單永遠停在 created。
+    floor = s.min_amounts.get(payment)
+    if floor and amount < floor:
+        raise bad_request(InvalidField(
+            f"{payment} 的最低金額是 {floor}，收到 {amount}", field="amount"))
+
     existing = store.get_by_reference(caller.caller_id, body.reference_id)
     if existing:
         # 冪等：重複的 reference_id 不是錯誤，回原本那筆
