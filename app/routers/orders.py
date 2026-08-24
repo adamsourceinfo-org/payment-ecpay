@@ -1,11 +1,11 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from app import ids
+from app import ids, refunds
 from app.auth import Caller, require
 from app.config import get_settings
 from app.ecpay import orders as ec
@@ -187,15 +187,28 @@ def refund(order_id: str, body: RefundCreate,
             "綠界測試環境不提供退款 API（官方：因無法提供實際授權），"
             "退款只能在正式環境執行", field="environment"))
 
-    # 已關帳走 R（退刷），未關帳走 N（放棄授權）。
-    # 綠界每日 20:15~20:30 自動關帳，所以當天付款的通常還沒關帳。
-    action = "R" if row["closed"] else "N"
-    try:
-        ec.do_action(merchant_trade_no=row["merchant_trade_no"],
-                     trade_no=row["ecpay_trade_no"], action=action,
-                     amount=amount)
-    except ECPayError as e:
-        raise upstream_error(e)
+    # 已關帳要送 R（退刷），未關帳要送 N（放棄授權），送錯會失敗。
+    # 依綠界的每日自動關帳時間推測先送哪一個，被拒就改送另一個 ——
+    # 兩者互斥、失敗沒有部分效果，所以重試是安全的。
+    attempts, errors = refunds.actions_for(row.get("paid_at"), row["closed"]), []
+    for action in attempts:
+        try:
+            ec.do_action(merchant_trade_no=row["merchant_trade_no"],
+                         trade_no=row["ecpay_trade_no"], action=action,
+                         amount=amount)
+            break
+        except ECPayError as e:
+            errors.append((action, e))
+    else:
+        # 兩個都失敗 —— 把兩次的原文都帶回去，不然沒人查得出是哪一步錯
+        raise HTTPException(status_code=502, detail={
+            "error": "ecpay_upstream",
+            "attempts": [{"action": a, "rtn_code": e.rtn_code,
+                          "rtn_msg": e.rtn_msg} for a, e in errors]})
 
+    # 記住這筆到底是不是已關帳，同一筆的後續部分退款就直接命中
+    if (action == "R") != bool(row["closed"]):
+        store.set_closed(row["id"], action == "R")
     row = store.add_refund(row["id"], amount, fully=(amount == remaining))
-    return {**_out(row), "refund_action": action, "refunded_now": amount}
+    return {**_out(row), "refund_action": action, "refunded_now": amount,
+            "attempts": [a for a, _ in errors] + [action]}

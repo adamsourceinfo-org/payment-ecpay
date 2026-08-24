@@ -205,8 +205,10 @@ async def payment_return(request: Request):
                 log.warning("訂單 %s 已是 paid，又收到 %s 的成功回呼",
                             order["id"], trade_no)
             else:
-                orders_store.mark_paid(order["id"], params.get("TradeNo"),
-                                       params.get("PaymentType"))
+                orders_store.mark_paid(
+                    order["id"], params.get("TradeNo"),
+                    params.get("PaymentType"),
+                    gwsr=params.get("gwsr"), auth_code=params.get("auth_code"))
         else:
             orders_store.set_status(order["id"], "failed",
                                     params.get("TradeNo"))

@@ -101,22 +101,36 @@ def test_refund_blocked_on_stage_with_explanation(client, rows):
 
 def test_refund_picks_action_by_closed_state(client, rows, monkeypatch,
                                               fake_settings):
-    """已關帳走 R（退刷），未關帳走 N（放棄授權）。
-    綠界每日 20:15~20:30 自動關帳，所以當天付款的通常還沒關帳。"""
+    """已關帳送 R（退刷），當天剛付款、還沒關帳送 N（放棄授權）。
+
+    注意判斷依據是**關帳時間**而不只是 `closed` 欄位 —— 那個欄位一開始
+    永遠是 false（先前沒有任何地方寫入它），只靠它就會永遠送 N。
+    """
+    from datetime import datetime, timedelta
+    from app.refunds import TAIPEI
     fake_settings.do_action_available = True
     seen = {}
     monkeypatch.setattr(router_mod.ec, "do_action",
                         lambda **kw: seen.update(kw) or {"RtnCode": "1"})
+    monkeypatch.setattr(router_mod.store, "set_closed", lambda *a: None)
     monkeypatch.setattr(router_mod.store, "add_refund",
                         lambda oid, amt, fully: _order(refunded_amount=amt,
                                                        status="refunded"))
-    rows["o1"] = _order(closed=True)
+    now = datetime.now(TAIPEI)
+
+    rows["o1"] = _order(closed=True, paid_at=now - timedelta(days=2))
     assert client.post("/v1/orders/o1/refund", headers=H,
                        json={}).json()["refund_action"] == "R"
 
-    rows["o1"] = _order(closed=False)
+    # 剛剛才付款 —— 一定還沒到今天的關帳時段
+    rows["o1"] = _order(closed=False, paid_at=now - timedelta(minutes=1))
     assert client.post("/v1/orders/o1/refund", headers=H,
                        json={}).json()["refund_action"] == "N"
+
+    # 兩天前付款、closed 還沒被寫入 —— 這就是先前會壞掉的情境
+    rows["o1"] = _order(closed=False, paid_at=now - timedelta(days=2))
+    assert client.post("/v1/orders/o1/refund", headers=H,
+                       json={}).json()["refund_action"] == "R"
 
 
 def test_other_callers_order_is_404_not_403(client, rows):
@@ -164,3 +178,49 @@ def test_no_floor_configured_means_no_check(client, monkeypatch, fake_settings):
         "reference_id": "r-any", "amount": 1, "item_name": "x",
         "choose_payment": "CVS"})
     assert r.status_code == 200
+
+
+def test_refund_falls_back_to_the_other_action(client, rows, monkeypatch,
+                                               fake_settings):
+    """第一個動作被綠界拒絕時要自動改送另一個。
+
+    這是先前的真缺陷：`orders.closed` 從來沒被寫入過，退款永遠送 N，
+    而正式商店開著每日自動關帳 —— 隔天以後的退款一律會失敗。
+    """
+    from app.errors import ECPayError
+    fake_settings.do_action_available = True
+    tried = []
+
+    def fake_do_action(**kw):
+        tried.append(kw["action"])
+        if len(tried) == 1:
+            raise ECPayError("10200052", "訂單已關帳，請使用退刷")
+        return {"RtnCode": "1"}
+
+    monkeypatch.setattr(router_mod.ec, "do_action", fake_do_action)
+    monkeypatch.setattr(router_mod.store, "set_closed", lambda *a: None)
+    monkeypatch.setattr(router_mod.store, "add_refund",
+                        lambda oid, amt, fully: _order(refunded_amount=amt,
+                                                       status="refunded"))
+    rows["o1"] = _order(closed=False, paid_at=None)
+    r = client.post("/v1/orders/o1/refund", headers=H, json={})
+    assert r.status_code == 200
+    assert len(tried) == 2 and tried[0] != tried[1]
+    assert r.json()["refund_action"] == tried[1]
+
+
+def test_refund_reports_both_failures(client, rows, monkeypatch, fake_settings):
+    """兩個都失敗時要把兩次的原文都帶回去 —— 只給一個，沒人查得出是哪一步錯。"""
+    from app.errors import ECPayError
+    fake_settings.do_action_available = True
+
+    def always_fail(**kw):
+        raise ECPayError("10200047", f"{kw['action']} 不允許")
+
+    monkeypatch.setattr(router_mod.ec, "do_action", always_fail)
+    rows["o1"] = _order(paid_at=None)
+    r = client.post("/v1/orders/o1/refund", headers=H, json={})
+    assert r.status_code == 502
+    attempts = r.json()["detail"]["attempts"]
+    assert len(attempts) == 2
+    assert {a["action"] for a in attempts} == {"R", "N"}

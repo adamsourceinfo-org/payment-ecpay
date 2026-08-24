@@ -39,13 +39,18 @@ def create(*, caller_id, reference_id, merchant_trade_no, amount,
         fetch="one")
 
 
-def mark_paid(order_id, ecpay_trade_no: str, payment_type: str):
+def mark_paid(order_id, ecpay_trade_no: str, payment_type: str,
+              gwsr: str = None, auth_code: str = None):
+    """gwsr 是信用卡授權單號，auth_code 是授權碼 —— 兩個都只有信用卡會有。
+    退款、查授權明細、跟綠界客服對帳都要靠它們，所以收到就存。"""
     return db.query(
         "UPDATE orders SET status = 'paid', ecpay_trade_no = %s,"
         " payment_type = %s, paid_at = COALESCE(paid_at, now()),"
+        " gwsr = COALESCE(%s, gwsr), auth_code = COALESCE(%s, auth_code),"
         " checkout_token = NULL,"            # 付完就讓導轉頁失效
         " updated_at = now() WHERE id = %s RETURNING *",
-        (ecpay_trade_no, payment_type, order_id), fetch="one")
+        (ecpay_trade_no, payment_type, gwsr or None, auth_code or None,
+         order_id), fetch="one")
 
 
 def set_status(order_id, status: str, ecpay_trade_no: str = None):
