@@ -100,6 +100,21 @@ dev 上呼叫會拿到帶說明的 400。真正的退刷只能在 prod 驗。
 dev 用的測試特店是**全球開發者共用**的，所以 `MerchantTradeNo` 一律高熵亂碼 ——
 流水號會撞到陌生人的訂單。stage 上也會看到不是你建的訂單。
 
+## 驗證
+
+```bash
+.venv/bin/python -m pytest -q                    # 單元（含綠界官方檢查碼向量）
+BASE=… KEY=… python3 scripts/stage-smoke.py checks     # 對已部署的服務跑 API 檢查
+BASE=… KEY=… python3 scripts/replay-callbacks.py       # 訂閱狀態機（簽好的回呼重放）
+BASE=… KEY=… python3 scripts/manual-verify.py          # 需要人刷一次卡的那段
+```
+
+`manual-verify.py` 會印出付款連結與測試卡資料，然後自己等回呼 ——
+你只要在瀏覽器點連結、刷卡。之所以需要人：綠界收銀台是 Vue SPA，
+信用卡表單由前端動態產生（HTML 原始碼裡只有 `<div id="PayForm"></div>`），
+伺服器端重放不可能，而自動化瀏覽器跑到最後一步不會送出。
+ATM 與超商代碼那類「留在綠界站內」的流程都自動驗過了。
+
 ## 開發
 
 ```bash
