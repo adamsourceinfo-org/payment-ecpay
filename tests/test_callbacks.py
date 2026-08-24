@@ -270,3 +270,23 @@ def test_non_ascii_rtnmsg_verifies(client, store):
     r = client.post("/ecpay/return", data=body)
     assert r.status_code == 200 and r.text == "1|OK"
     assert ("order", "mark_paid") in [(c[0], c[1]) for c in store.calls]
+
+
+def test_used_checkout_link_says_already_paid(client, store, monkeypatch):
+    """付款完成後 token 會被清掉（不清的話重開這頁會在綠界建立**另一筆**交易，
+    等於給了重複付款的機會）。但直接回 404 會讓人以為系統壞了 ——
+    分辨得出來的情況要說清楚。"""
+    monkeypatch.setattr(callbacks.orders_store, "get_by_checkout_token",
+                        lambda t: None)
+    monkeypatch.setattr(callbacks.subs_store, "get_by_checkout_token",
+                        lambda t: None)
+    monkeypatch.setattr(callbacks.orders_store, "get_by_used_token",
+                        lambda t: {"id": "oid-1"} if t == "used" else None)
+    monkeypatch.setattr(callbacks.subs_store, "get_by_used_token",
+                        lambda t: None)
+
+    r = client.get("/ecpay/checkout/used")
+    assert r.status_code == 200 and "已經完成付款" in r.text
+
+    r = client.get("/ecpay/checkout/never-existed")
+    assert r.status_code == 404 and "無效" in r.text

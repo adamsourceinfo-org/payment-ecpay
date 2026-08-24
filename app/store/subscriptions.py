@@ -46,6 +46,7 @@ def mark_active(sub_id, ecpay_trade_no):
         "UPDATE subscriptions SET status = 'active',"
         " ecpay_trade_no = COALESCE(%s, ecpay_trade_no),"
         " first_charged_at = COALESCE(first_charged_at, now()),"
+        " used_checkout_token = COALESCE(checkout_token, used_checkout_token),"
         " checkout_token = NULL, updated_at = now()"
         " WHERE id = %s RETURNING *", (ecpay_trade_no, sub_id), fetch="one")
 
@@ -106,3 +107,9 @@ def get_by_id(sub_id):
     """不帶 caller_id —— 只給回呼路徑用。"""
     return db.query("SELECT * FROM subscriptions WHERE id = %s", (sub_id,),
                     fetch="one")
+
+
+def get_by_used_token(token):
+    """已經用掉的付款連結。只為了讓「已付款」與「連結不存在」分得出來。"""
+    return db.query("SELECT id FROM subscriptions WHERE used_checkout_token = %s",
+                    (token,), fetch="one")

@@ -111,8 +111,21 @@ def checkout(token: str):
     row = orders_store.get_by_checkout_token(token) \
         or subs_store.get_by_checkout_token(token)
     if not row:
-        # 已付款、已取消、或根本不存在 —— 對外不區分
-        return HTMLResponse("<h1>付款連結已失效</h1>", status_code=404)
+        # 付款完成時 token 會被清掉（不清的話，重開這一頁會在綠界建立
+        # **另一筆**交易，等於給了重複付款的機會）。但直接回 404 會讓人
+        # 以為連結壞了 —— 分辨得出來的情況就說清楚。
+        done = (orders_store.get_by_used_token(token)
+                or subs_store.get_by_used_token(token))
+        if done:
+            return HTMLResponse(
+                "<!doctype html><meta charset='utf-8'>"
+                "<title>已完成付款</title>"
+                "<h1>這筆已經完成付款</h1>"
+                "<p>不需要再付一次。</p>", status_code=200)
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'>"
+            "<title>連結無效</title><h1>付款連結無效</h1>"
+            "<p>請向原商店重新取得付款連結。</p>", status_code=404)
 
     kind = "order" if "choose_payment" in row else "subscription"
     store = orders_store if kind == "order" else subs_store

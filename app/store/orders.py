@@ -47,6 +47,7 @@ def mark_paid(order_id, ecpay_trade_no: str, payment_type: str,
         "UPDATE orders SET status = 'paid', ecpay_trade_no = %s,"
         " payment_type = %s, paid_at = COALESCE(paid_at, now()),"
         " gwsr = COALESCE(%s, gwsr), auth_code = COALESCE(%s, auth_code),"
+        " used_checkout_token = COALESCE(checkout_token, used_checkout_token),"
         " checkout_token = NULL,"            # 付完就讓導轉頁失效
         " updated_at = now() WHERE id = %s RETURNING *",
         (ecpay_trade_no, payment_type, gwsr or None, auth_code or None,
@@ -116,3 +117,9 @@ def get_by_id(order_id):
     """不帶 caller_id —— 只給回呼路徑用（那時還不知道是誰的）。
     caller 端的查詢一律走 get()，那支強制帶 caller_id。"""
     return db.query("SELECT * FROM orders WHERE id = %s", (order_id,), fetch="one")
+
+
+def get_by_used_token(token):
+    """已經用掉的付款連結。只為了讓「已付款」與「連結不存在」分得出來。"""
+    return db.query("SELECT id FROM orders WHERE used_checkout_token = %s",
+                    (token,), fetch="one")
