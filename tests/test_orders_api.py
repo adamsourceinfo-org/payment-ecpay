@@ -37,7 +37,8 @@ def _order(**kw):
             "currency": "TWD", "choose_payment": "Credit",
             "payment_type": "Credit_CreditCard", "status": "paid",
             "refunded_amount": 0, "paid_at": None, "created_at": None,
-            "closed": True, "checkout_token": None}
+            "closed": True, "checkout_token": None,
+            "gwsr": None, "auth_code": None}
     base.update(kw)
     return base
 
@@ -224,3 +225,10 @@ def test_refund_reports_both_failures(client, rows, monkeypatch, fake_settings):
     attempts = r.json()["detail"]["attempts"]
     assert len(attempts) == 2
     assert {a["action"] for a in attempts} == {"R", "N"}
+
+
+def test_order_exposes_credit_authorisation_ids(client, rows):
+    """信用卡的授權單號與授權碼要回給 caller —— 對帳與跟綠界客服查詢都要用。"""
+    rows["o1"] = _order(gwsr="14563813", auth_code="R05013")
+    d = client.get("/v1/orders/o1", headers=H).json()
+    assert d["gwsr"] == "14563813" and d["auth_code"] == "R05013"

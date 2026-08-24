@@ -30,6 +30,10 @@ def _out(row: dict, *, base: str = None, info: dict = None) -> dict:
         "currency": row["currency"],
         "choose_payment": row["choose_payment"],
         "payment_type": row.get("payment_type"),
+        # 信用卡才有。跟綠界客服對帳、事後查授權明細都要靠這兩個，
+        # 存了卻不給 caller 等於做半套。
+        "gwsr": row.get("gwsr"),
+        "auth_code": row.get("auth_code"),
         "status": row["status"],
         "refunded_amount": row["refunded_amount"],
         "paid_at": row.get("paid_at"),
