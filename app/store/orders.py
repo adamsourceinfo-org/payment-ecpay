@@ -97,3 +97,17 @@ def list_(caller_id: str, status=None, limit: int = 50, offset: int = 0):
         "SELECT * FROM orders WHERE caller_id = %s"
         " ORDER BY created_at DESC LIMIT %s OFFSET %s",
         (caller_id, limit, offset))
+
+
+def rotate_trade_no(order_id, merchant_trade_no: str, fields_json: str):
+    """換一個新的綠界單號並重簽表單。舊單號留在 trade_attempts 裡仍可解析。"""
+    return db.query(
+        "UPDATE orders SET merchant_trade_no = %s, checkout_fields = %s::jsonb,"
+        " updated_at = now() WHERE id = %s RETURNING *",
+        (merchant_trade_no, fields_json, order_id), fetch="one")
+
+
+def get_by_id(order_id):
+    """不帶 caller_id —— 只給回呼路徑用（那時還不知道是誰的）。
+    caller 端的查詢一律走 get()，那支強制帶 caller_id。"""
+    return db.query("SELECT * FROM orders WHERE id = %s", (order_id,), fetch="one")

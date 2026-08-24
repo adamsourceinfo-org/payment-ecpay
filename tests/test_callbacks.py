@@ -17,6 +17,7 @@ class FakeStore:
         self.orders = {}
         self.subs = {}
         self.events = {}
+        self.attempts = {}
         self.calls = []
 
     # --- events
@@ -31,6 +32,24 @@ class FakeStore:
 def store(monkeypatch):
     fs = FakeStore()
     monkeypatch.setattr(callbacks.events_store, "record", fs.record)
+
+    # trade_attempts：單號 → (kind, id)。回呼一律先走這裡，
+    # 因為訂單可能換過單號（綠界的單號送出過就不能再用）。
+    monkeypatch.setattr(callbacks.attempts_store, "record",
+                        lambda tn, kind, sid, _fs=fs: _fs.attempts.update(
+                            {tn: (kind, str(sid))}))
+
+    def _resolve(tn, _fs=fs):
+        hit = _fs.attempts.get(tn)
+        return {"subject_kind": hit[0], "subject_id": hit[1]} if hit else None
+    monkeypatch.setattr(callbacks.attempts_store, "resolve", _resolve)
+
+    def _by_id(store_dict):
+        def inner(sid, _d=store_dict):
+            return next((v for v in _d.values() if str(v["id"]) == str(sid)), None)
+        return inner
+    monkeypatch.setattr(callbacks.orders_store, "get_by_id", _by_id(fs.orders))
+    monkeypatch.setattr(callbacks.subs_store, "get_by_id", _by_id(fs.subs))
 
     for name in ("get_by_trade_no",):
         monkeypatch.setattr(callbacks.orders_store, name,
@@ -80,21 +99,21 @@ def test_return_rejects_missing_signature(client, store):
 
 def test_return_acks_with_exact_string(client, store):
     """必須逐字回 `1|OK`。回別的綠界會當成沒收到，隔 5~15 分重送四次。"""
-    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1"}
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
     r = client.post("/ecpay/return", data=_order_return())
     assert r.status_code == 200
     assert r.text == "1|OK"
 
 
 def test_return_marks_order_paid(client, store):
-    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1"}
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
     client.post("/ecpay/return", data=_order_return())
     assert ("order", "mark_paid") in [(c[0], c[1]) for c in store.calls]
 
 
 def test_return_duplicate_is_noop_but_still_acks(client, store):
     """重送時什麼都不做，但**還是要回 1|OK** —— 不回它會一直重送。"""
-    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1"}
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
     body = _order_return()
     first = client.post("/ecpay/return", data=body)
     store.calls.clear()
@@ -123,7 +142,7 @@ def test_first_period_charge_looks_identical_to_one_off(client, store):
 
 
 def test_return_failure_does_not_mark_paid(client, store):
-    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1"}
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
     client.post("/ecpay/return", data=_order_return(rtn="10100058"))
     done = [(c[0], c[1]) for c in store.calls]
     assert ("order", "mark_paid") not in done
@@ -177,7 +196,7 @@ def test_period_charge_failure_does_not_cancel_subscription(client, store):
 
 def test_payment_info_lands_and_sets_awaiting(client, store):
     """ATM 取號：這時還沒付款，只有虛擬帳號與繳費期限。"""
-    store.orders["O555"] = {"id": "oid-5", "caller_id": "c1"}
+    store.orders["O555"] = {"id": "oid-5", "caller_id": "c1", "status": "created"}
     body = sign({
         "MerchantID": "3002607", "MerchantTradeNo": "O555", "RtnCode": "2",
         "RtnMsg": "Get vAccount Succeeded", "TradeNo": "2608241200005555",
@@ -201,3 +220,27 @@ def test_order_result_does_not_change_state(client, store):
     assert r.status_code == 303
     assert r.headers["location"].startswith("https://caller.example/done?")
     assert store.calls == []                # 一個狀態都沒改
+
+
+def test_callback_for_an_old_trade_no_still_finds_the_order(client, store):
+    """綠界的單號送出過就不能再用，所以「回付款頁再付一次」會換新單號。
+    但舊單號的回呼還是可能進來（兩個分頁、或綠界延遲重送）——
+    透過 trade_attempts 解析，舊的照樣找得回同一筆訂單。"""
+    store.orders["OLD"] = {"id": "oid-9", "caller_id": "c1", "status": "created"}
+    store.attempts["OLD"] = ("order", "oid-9")
+    store.attempts["NEW"] = ("order", "oid-9")     # 換過的新單號
+
+    r = client.post("/ecpay/return", data=_order_return(trade_no="OLD"))
+    assert r.text == "1|OK"
+    (_, caller_id, kind, subject_id), = store.events.values()
+    assert (caller_id, kind, subject_id) == ("c1", "order", "oid-9")
+
+
+def test_second_success_on_a_paid_order_does_not_double_mark(client, store):
+    """使用者開了兩個分頁、兩次都付成功。事件要留痕，但不重複標記付款。"""
+    store.orders["T2"] = {"id": "oid-8", "caller_id": "c1", "status": "paid"}
+    store.attempts["T2"] = ("order", "oid-8")
+    r = client.post("/ecpay/return", data=_order_return(trade_no="T2"))
+    assert r.text == "1|OK"
+    assert ("order", "mark_paid") not in [(c[0], c[1]) for c in store.calls]
+    assert len(store.events) == 1                  # 但事件有落地

@@ -92,3 +92,17 @@ def list_(caller_id, status=None, limit=50, offset=0):
         "SELECT * FROM subscriptions WHERE caller_id = %s"
         " ORDER BY created_at DESC LIMIT %s OFFSET %s",
         (caller_id, limit, offset))
+
+
+def rotate_trade_no(sub_id, merchant_trade_no: str, fields_json: str):
+    return db.query(
+        "UPDATE subscriptions SET merchant_trade_no = %s,"
+        " checkout_fields = %s::jsonb, updated_at = now()"
+        " WHERE id = %s RETURNING *",
+        (merchant_trade_no, fields_json, sub_id), fetch="one")
+
+
+def get_by_id(sub_id):
+    """不帶 caller_id —— 只給回呼路徑用。"""
+    return db.query("SELECT * FROM subscriptions WHERE id = %s", (sub_id,),
+                    fetch="one")

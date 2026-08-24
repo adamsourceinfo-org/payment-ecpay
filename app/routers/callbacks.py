@@ -21,6 +21,10 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from app.config import get_settings
 from app.ecpay import checkmac
+from app import ids
+from app.ecpay import client as ec_client
+from app.ecpay import orders as ec_orders
+from app.store import attempts as attempts_store
 from app.store import events as events_store
 from app.store import orders as orders_store
 from app.store import subscriptions as subs_store
@@ -33,6 +37,24 @@ router = APIRouter(prefix="/ecpay", tags=["ecpay-callbacks"])
 # 都會被當成沒收到而重送。
 ACK = "1|OK"
 SUCCESS = "1"
+
+
+def _resolve(trade_no: str):
+    """單號 → (訂閱, 訂單)，其中一個是 None。
+
+    先查 trade_attempts（涵蓋所有換過的單號），查不到再退回直接比對 ——
+    後者是為了讓 migration 之前建立的資料仍然解析得到。
+    """
+    if not trade_no:
+        return None, None
+    hit = attempts_store.resolve(trade_no)
+    if hit:
+        sid = str(hit["subject_id"])
+        if hit["subject_kind"] == "subscription":
+            return subs_store.get_by_id(sid), None
+        return None, orders_store.get_by_id(sid)
+    sub = subs_store.get_by_trade_no(trade_no)
+    return sub, (None if sub else orders_store.get_by_trade_no(trade_no))
 
 
 async def _form(request: Request) -> dict:
@@ -60,9 +82,25 @@ def checkout(token: str):
         # 已付款、已取消、或根本不存在 —— 對外不區分
         return HTMLResponse("<h1>付款連結已失效</h1>", status_code=404)
 
+    kind = "order" if "choose_payment" in row else "subscription"
+    store = orders_store if kind == "order" else subs_store
+
     fields = row["checkout_fields"]
     if isinstance(fields, str):
         fields = json.loads(fields)
+
+    # 綠界的 MerchantTradeNo **送出過就不能再用** —— 回訪這一頁會拿到
+    # 10300028「訂單編號重覆」。而「跳開再回來付」是最常見的行為，
+    # 所以每次進來都換一個新單號重簽。舊單號留在 trade_attempts 裡，
+    # 它的回呼照樣找得回這筆訂單。
+    trade_no = ids.merchant_trade_no("O" if kind == "order" else "S")
+    fields = dict(fields)
+    fields.pop("CheckMacValue", None)
+    fields["MerchantTradeNo"] = trade_no
+    fields["MerchantTradeDate"] = ec_orders.now_taipei()
+    fields = ec_client.signed(fields)
+    attempts_store.record(trade_no, kind, row["id"])
+    store.rotate_trade_no(row["id"], trade_no, json.dumps(fields))
 
     inputs = "\n".join(
         f'<input type="hidden" name="{html.escape(k)}" '
@@ -98,8 +136,9 @@ async def payment_return(request: Request):
     rtn_code = str(params.get("RtnCode", ""))
     raw = json.dumps(params, ensure_ascii=False)
 
-    sub = subs_store.get_by_trade_no(trade_no)
-    order = None if sub else orders_store.get_by_trade_no(trade_no)
+    # **一律透過 trade_attempts 解析** —— 訂單可能換過單號（見 checkout），
+    # 舊單號的回呼還是要找得回來。
+    sub, order = _resolve(trade_no)
     caller_id = (sub or order or {}).get("caller_id")
     kind = "subscription" if sub else ("order" if order else None)
     subject_id = str((sub or order)["id"]) if (sub or order) else None
@@ -128,8 +167,14 @@ async def payment_return(request: Request):
             subs_store.set_status(sub["id"], "failed")
     elif order:
         if rtn_code == SUCCESS:
-            orders_store.mark_paid(order["id"], params.get("TradeNo"),
-                                   params.get("PaymentType"))
+            if order["status"] == "paid":
+                # 同一筆訂單的另一次嘗試也付款成功（例如使用者開了兩個分頁）。
+                # 不重複標記，但事件已落地 —— 這是需要人看一眼的情況。
+                log.warning("訂單 %s 已是 paid，又收到 %s 的成功回呼",
+                            order["id"], trade_no)
+            else:
+                orders_store.mark_paid(order["id"], params.get("TradeNo"),
+                                       params.get("PaymentType"))
         else:
             orders_store.set_status(order["id"], "failed",
                                     params.get("TradeNo"))
@@ -156,7 +201,7 @@ async def period_return(request: Request):
     rtn_code = str(params.get("RtnCode", ""))
     raw = json.dumps(params, ensure_ascii=False)
 
-    sub = subs_store.get_by_trade_no(trade_no)
+    sub, _ = _resolve(trade_no)
     caller_id = sub["caller_id"] if sub else None
     subject_id = str(sub["id"]) if sub else None
 
@@ -197,7 +242,7 @@ async def payment_info(request: Request):
 
     trade_no = params.get("MerchantTradeNo", "")
     raw = json.dumps(params, ensure_ascii=False)
-    order = orders_store.get_by_trade_no(trade_no)
+    _, order = _resolve(trade_no)
     caller_id = order["caller_id"] if order else None
     subject_id = str(order["id"]) if order else None
 
@@ -230,8 +275,8 @@ async def order_result(request: Request):
     trade_no = params.get("MerchantTradeNo", "")
     verified = _verified(params) if params.get("CheckMacValue") else False
 
-    row = (orders_store.get_by_trade_no(trade_no)
-           or subs_store.get_by_trade_no(trade_no)) if trade_no else None
+    _sub, _ord = _resolve(trade_no)
+    row = _sub or _ord
     target = (row or {}).get("return_url")
     if not target:
         status = "success" if str(params.get("RtnCode", "")) == SUCCESS else "failed"

@@ -13,6 +13,7 @@ from app.errors import (ECPayError, FieldError, InvalidField, bad_request,
                         not_found, upstream_error)
 from app.models import OrderCreate, RefundCreate
 from app.money import validate_amount
+from app.store import attempts as attempts_store
 from app.store import orders as store
 from app.urls import base_url
 
@@ -85,6 +86,10 @@ def create_order(body: OrderCreate, request: Request,
         amount=amount, choose_payment=payment, status="created",
         checkout_token=ids.checkout_token(), return_url=body.return_url,
         checkout_fields_json=json.dumps(fields))
+
+    # 第一次嘗試也要進 trade_attempts —— caller 可能自己 render form，
+    # 那條路不會經過導轉頁。
+    attempts_store.record(trade_no, "order", row["id"])
 
     out = _out(row, base=base)
     # form 一併回傳，讓要自己 render 的 caller（App 內嵌 WebView）也有路走。

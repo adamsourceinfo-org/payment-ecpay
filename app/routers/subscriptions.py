@@ -14,6 +14,7 @@ from app.errors import (ECPayError, FieldError, InvalidField, bad_request,
                         not_found, upstream_error)
 from app.models import SubscriptionCreate
 from app.money import validate_amount
+from app.store import attempts as attempts_store
 from app.store import subscriptions as store
 from app.urls import base_url
 
@@ -87,6 +88,10 @@ def create_subscription(body: SubscriptionCreate, request: Request,
         frequency=period["frequency"], exec_times=period["exec_times"],
         status="created", checkout_token=ids.checkout_token(),
         return_url=body.return_url, checkout_fields_json=json.dumps(fields))
+
+    # 第一次嘗試也要進 trade_attempts —— caller 可能自己 render form，
+    # 那條路不會經過導轉頁。
+    attempts_store.record(trade_no, "subscription", row["id"])
 
     out = _out(row, base=base)
     out["form"] = {"action": s.aio_checkout_url, "method": "POST",
