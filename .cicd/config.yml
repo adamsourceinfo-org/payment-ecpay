@@ -1,0 +1,12 @@
+service: payment-ecpay
+health_path: /health
+# 綠界的回呼（ReturnURL / PeriodReturnURL / PaymentInfoURL）必須打得到，
+# 所以服務對公網開放。這表示應用層的 API key 是唯一一道門 ——
+# key 存 hash、可停用、有稽核欄位；回呼端點則靠 CheckMacValue 驗真偽。
+allow_unauthenticated: true
+
+# Cloud SQL 只宣告一次，不是 dev/prod 各一份。
+# 連線字串與 DB 帳號由 CI 依部署目標推導，寫錯環境是寫不出來的錯。
+db:
+  instance: payment-ecpay-pg
+  name: payment_ecpay
