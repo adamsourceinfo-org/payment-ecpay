@@ -5,8 +5,10 @@ health_path: /health
 # key 存 hash、可停用、有稽核欄位；回呼端點則靠 CheckMacValue 驗真偽。
 allow_unauthenticated: true
 
-# Cloud SQL 只宣告一次，不是 dev/prod 各一份。
-# 連線字串與 DB 帳號由 CI 依部署目標推導，寫錯環境是寫不出來的錯。
+# 一個環境一台 apps-pg，服務靠 database 分隔。instance 由平台決定，
+# 這裡只宣告自己的 database 與執行身分；連線字串由 CI 依部署目標推導。
+# 隔離來自 payment_ecpay 這個 database 的 REVOKE CONNECT FROM PUBLIC
+# 加上只授權給 run-payment-ecpay，不是靠 IAM。
+runtime_sa: run-payment-ecpay
 db:
-  instance: payment-ecpay-pg
   name: payment_ecpay
