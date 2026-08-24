@@ -63,8 +63,24 @@ async def _form(request: Request) -> dict:
 
 
 def _verified(params: dict) -> bool:
+    """驗簽，失敗時留下足以查案的線索。
+
+    驗簽失敗是最難查的一類問題：綠界只會告訴你「沒收到 1|OK」，
+    看不到是哪個欄位讓檢查碼對不上。所以失敗時一定要記下
+    **欄位名清單**與雙方的檢查碼；欄位「值」只在 debug 等級記，
+    因為那裡面可能有姓名、卡號末四碼之類的資料。
+    """
     s = get_settings()
-    return checkmac.verify(params, s.hash_key, s.hash_iv)
+    if checkmac.verify(params, s.hash_key, s.hash_iv):
+        return True
+    rest = {k: v for k, v in params.items() if k != "CheckMacValue"}
+    log.warning(
+        "驗簽失敗 trade=%s 欄位=%s 綠界=%s 我們算的=%s",
+        params.get("MerchantTradeNo"), sorted(rest),
+        params.get("CheckMacValue"),
+        checkmac.generate(rest, s.hash_key, s.hash_iv))
+    log.debug("驗簽失敗的原始欄位：%r", rest)
+    return False
 
 
 @router.get("/checkout/{token}")
