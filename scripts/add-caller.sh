@@ -18,7 +18,7 @@ SCOPES="${3:?缺少 scopes（逗號分隔）}"
 NOTE="${4:-}"
 
 PROJECT="adamsourceinfo-${ENVIRONMENT}"
-INSTANCE="payment-ecpay-pg"
+INSTANCE="apps-pg"
 DB="payment_ecpay"
 PORT="${PGPORT_LOCAL:-5433}"
 
@@ -29,11 +29,11 @@ if [[ -z "$DB_USER" ]]; then
 fi
 
 # 一次性前置（每個環境做一次）：把自己加成這個 instance 的 IAM 使用者，
-# 並讓自己能存取 app 建的表 —— 表的擁有者是 run-runtime，不是你。
+# 並讓自己能存取 app 建的表 —— 表的擁有者是 run-payment-ecpay，不是你。
 #
-#   gcloud sql users create "$DB_USER" --instance=payment-ecpay-pg \
+#   gcloud sql users create "$DB_USER" --instance=apps-pg \
 #     --project="$PROJECT" --type=cloud_iam_user
-#   psql ... -c 'GRANT "run-runtime@'"$PROJECT"'.iam" TO "'"$DB_USER"'"'
+#   psql ... -c 'GRANT "run-payment-ecpay@'"$PROJECT"'.iam" TO "'"$DB_USER"'"'
 #
 # 還需要專案層級的 roles/cloudsql.instanceUser 與 roles/cloudsql.client。
 
