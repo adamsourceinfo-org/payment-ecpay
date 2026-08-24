@@ -67,7 +67,24 @@ def set_totals(sub_id, times: int, amount: int):
 
 
 def record_charge(sub_id, *, gwsr, amount, rtn_code, auth_code, process_date):
-    """回新的扣款 id；綠界重送造成的重複回 None。gwsr 是天然的去重鍵。"""
+    """回新的扣款 id；綠界重送造成的重複回 None。gwsr 是天然的去重鍵。
+
+    **首期是特例**：綠界首期回呼**不帶 gwsr**（實測確認），只能先塞
+    `first:<單號>` 佔位。真實的 gwsr 要等對帳（`QueryCreditCardPeriodInfo`
+    的 ExecLog）才拿得到 —— 那時要把佔位那列**升級**成真實值，
+    而不是插入第二列，否則同一筆扣款會被記成兩次。
+    """
+    if not str(gwsr).startswith("first:"):
+        upgraded = db.query(
+            "UPDATE subscription_charges SET gwsr = %s,"
+            " auth_code = COALESCE(%s, auth_code), rtn_code = %s"
+            " WHERE subscription_id = %s AND gwsr LIKE 'first:%%'"
+            "   AND amount = %s AND process_date IS NOT DISTINCT FROM %s"
+            " RETURNING id",
+            (str(gwsr), auth_code, rtn_code, sub_id, amount, process_date),
+            fetch="one")
+        if upgraded:
+            return upgraded["id"]
     row = db.query(
         "INSERT INTO subscription_charges (subscription_id, gwsr, amount,"
         " rtn_code, auth_code, process_date) VALUES (%s,%s,%s,%s,%s,%s)"
