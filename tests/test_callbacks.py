@@ -244,3 +244,29 @@ def test_second_success_on_a_paid_order_does_not_double_mark(client, store):
     assert r.text == "1|OK"
     assert ("order", "mark_paid") not in [(c[0], c[1]) for c in store.calls]
     assert len(store.events) == 1                  # 但事件有落地
+
+
+def test_non_ascii_rtnmsg_verifies(client, store):
+    """**綠界真實的成功通知帶中文 RtnMsg（「付款成功」）。**
+
+    這條測試是踩到之後補的：Starlette 的 `request.form()` 用 latin-1 解碼
+    urlencoded body，中文會變成亂碼，拿亂碼算檢查碼必定對不上，
+    結果是「綠界說沒收到 1|OK」而我們只看到驗簽失敗。
+
+    先前所有回呼測試都用 ASCII，latin-1 與 UTF-8 結果相同，所以全過 ——
+    測試綠燈完全沒有證明這條路是通的。
+    """
+    store.orders["ZH"] = {"id": "oid-zh", "caller_id": "c1", "status": "created"}
+    store.attempts["ZH"] = ("order", "oid-zh")
+    body = sign({
+        "MerchantID": "3002607", "MerchantTradeNo": "ZH", "RtnCode": "1",
+        "RtnMsg": "付款成功", "TradeNo": "2608241117046064", "TradeAmt": "9",
+        "PaymentDate": "2026/08/24 11:22:26", "PaymentType": "ATM_BOT",
+        "PaymentTypeChargeFee": "1", "SimulatePaid": "1",
+        "TradeDate": "2026/08/24 11:17:04", "StoreID": "",
+        "CustomField1": "", "CustomField2": "", "CustomField3": "",
+        "CustomField4": "",
+    })
+    r = client.post("/ecpay/return", data=body)
+    assert r.status_code == 200 and r.text == "1|OK"
+    assert ("order", "mark_paid") in [(c[0], c[1]) for c in store.calls]

@@ -15,6 +15,7 @@ ExecTimes / TotalSuccessTimes 只出現在第二期起的 PeriodReturnURL。
 import html
 import json
 import logging
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -58,8 +59,23 @@ def _resolve(trade_no: str):
 
 
 async def _form(request: Request) -> dict:
-    form = await request.form()
-    return {k: str(v) for k, v in form.items()}
+    """自己解析 body，**不要用 `request.form()`**。
+
+    Starlette 的 urlencoded 解析器用 latin-1 解碼 body。綠界成功通知的
+    `RtnMsg` 是中文（「付款成功」），latin-1 解出來是亂碼，
+    拿亂碼去算 CheckMacValue 必定對不上 —— 症狀是綠界說「沒收到 1|OK」
+    而我們這邊看起來只是驗簽失敗，兩邊都指不出真正的原因。
+
+    這個 bug 只有在收到**真實的**綠界回呼時才會出現：自己造的測試資料
+    如果全是 ASCII，latin-1 與 UTF-8 的結果一模一樣，測試會全過。
+    """
+    raw = await request.body()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # 綠界舊介面用 Big5。AIO V5 是 UTF-8，但退路成本很低。
+        text = raw.decode("big5", errors="replace")
+    return dict(parse_qsl(text, keep_blank_values=True))
 
 
 def _verified(params: dict) -> bool:
@@ -287,7 +303,8 @@ async def order_result(request: Request):
     **不在這裡改訂單狀態** —— 瀏覽器導回是使用者可以偽造、也可能根本不發生的
     （關掉分頁就沒了）。狀態的真相來源只有幕後的 ReturnURL。
     """
-    params = await _form(request) if request.method == "POST" else dict(request.query_params)
+    params = (await _form(request) if request.method == "POST"
+              else dict(request.query_params))
     trade_no = params.get("MerchantTradeNo", "")
     verified = _verified(params) if params.get("CheckMacValue") else False
 
