@@ -46,3 +46,25 @@ def test_reports_refund_api_available(client, monkeypatch):
     """綠界文件說測試環境沒有退款 API，實測是錯的 —— 兩邊都回報可用。"""
     monkeypatch.setattr(db, "db_status", _ok)
     assert client.get("/health").json()["ecpay"]["refund_api"] == "available"
+
+
+def test_credit_check_code_absence_is_not_unhealthy(client, monkeypatch,
+                                                    fake_settings):
+    """商家檢查碼只有正式環境用得到（查詢信用卡單筆明細只有正式環境有），
+    dev 沒有是正常的，不能因此讓健康檢查紅燈。"""
+    monkeypatch.setattr(db, "db_status", _ok)
+    fake_settings.credit_check_code = None
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["ecpay"]["credit_check_code"] == "unset"
+
+    fake_settings.credit_check_code = "97361824"
+    assert client.get("/health").json()["ecpay"]["credit_check_code"] == "loaded"
+
+
+def test_credit_check_code_value_never_appears_in_health(client, monkeypatch,
+                                                         fake_settings):
+    """跟 HashKey 一樣，只回報有沒有，不回報值。"""
+    monkeypatch.setattr(db, "db_status", _ok)
+    fake_settings.credit_check_code = "97361824"
+    assert "97361824" not in client.get("/health").text

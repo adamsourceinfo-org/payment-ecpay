@@ -35,6 +35,9 @@ def health(response: Response):
             "env": s.ecpay_env,
             "merchant_id": s.merchant_id,
             "credentials": "loaded" if (s.hash_key and s.hash_iv) else "missing",
+            # 商家檢查碼只有正式環境用得到（查詢信用卡單筆明細），
+            # dev 沒有是正常的，不算不健康。
+            "credit_check_code": "loaded" if s.credit_check_code else "unset",
             "allowed_payments": sorted(s.allowed_payments),
             # 綠界文件說測試環境沒有退款 API，實測是錯的 —— 兩邊都能用。
             "refund_api": "available",

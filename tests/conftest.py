@@ -20,6 +20,7 @@ class FakeSettings:
     period_action_url = "https://payment-stage.ecpay.com.tw/Cashier/CreditCardPeriodAction"
     do_action_url = "https://payment.ecpay.com.tw/CreditDetail/DoAction"
     merchant_id = "3002607"
+    credit_check_code = None      # 測試環境沒有（那支查詢只有正式環境有）
     hash_key = TEST_KEY
     hash_iv = TEST_IV
     allowed_payments = frozenset({"Credit", "WebATM", "ATM", "CVS", "BARCODE"})

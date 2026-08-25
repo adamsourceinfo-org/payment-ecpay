@@ -30,6 +30,10 @@ class Settings:
     merchant_id: str
     hash_key: str
     hash_iv: str
+    # 「商家檢查碼」。只有 `CreditDetail/QueryTrade/V2`（查詢信用卡單筆明細，
+    # 會回授權/關帳/取消狀態）需要它，而那支只有正式環境有 ——
+    # 所以 dev 不會有值，設計上必須允許缺席。
+    credit_check_code: Optional[str]
     allowed_payments: frozenset
     # 付款方式 → 最低金額。綠界**沒有公布**這些數字（在合約與費率頁、依商店而異），
     # 所以不寫死在程式裡，由每個環境自己量、自己設。沒設就不擋。
@@ -128,6 +132,7 @@ def load_settings() -> Settings:
         # 那個是半公開的）。兩個都走 Secret Manager。
         hash_key=_required("ECPAY_HASH_KEY"),
         hash_iv=_required("ECPAY_HASH_IV"),
+        credit_check_code=os.environ.get("ECPAY_CREDIT_CHECK_CODE") or None,
         allowed_payments=payments,
         min_amounts=mins,
         timeout_seconds=float(os.environ.get("ECPAY_TIMEOUT_SECONDS", "10")),
