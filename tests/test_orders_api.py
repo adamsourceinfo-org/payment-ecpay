@@ -297,3 +297,25 @@ def test_partial_refund_failure_explains_the_closing_window(client, rows,
     d = r.json()["detail"]
     assert [a["action"] for a in d["attempts"]] == ["R"]
     assert "20:15" in d["message"] and "全額退款" in d["message"]
+
+
+def test_list_can_filter_by_caller_reference_id(client, monkeypatch):
+    """caller 手上通常只有自己的 reference_id，不是我們的 UUID ——
+    不能逼他自己維護一份 id 對照表。"""
+    seen = {}
+    monkeypatch.setattr(router_mod.store, "list_",
+                        lambda cid, **kw: seen.update(kw) or [])
+    r = client.get("/v1/orders?reference_id=my-order-001", headers=H)
+    assert r.status_code == 200
+    assert seen["reference_id"] == "my-order-001"
+    assert seen["status"] is None
+
+
+def test_list_filters_are_scoped_to_the_caller(client, monkeypatch):
+    """reference_id 只在自己的範圍內找 —— 兩個 caller 用同一個
+    reference_id 是完全合法的，不能讓其中一個查到另一個的。"""
+    seen = {}
+    monkeypatch.setattr(router_mod.store, "list_",
+                        lambda cid, **kw: seen.update(caller=cid, **kw) or [])
+    client.get("/v1/orders?reference_id=shared", headers=H)
+    assert seen["caller"] == "c1"

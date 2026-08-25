@@ -107,16 +107,21 @@ def charges(sub_id):
         (sub_id,))
 
 
-def list_(caller_id, status=None, limit=50, offset=0):
+def list_(caller_id, status=None, reference_id=None, limit=50, offset=0):
+    """caller 手上通常只有自己的 reference_id，不是我們的 UUID ——
+    所以列表要能用它過濾，否則 caller 得自己維護一份 id 對照表。"""
+    where = ["caller_id = %s"]
+    args = [caller_id]
     if status:
-        return db.query(
-            "SELECT * FROM subscriptions WHERE caller_id = %s AND status = %s"
-            " ORDER BY created_at DESC LIMIT %s OFFSET %s",
-            (caller_id, status, limit, offset))
+        where.append("status = %s")
+        args.append(status)
+    if reference_id:
+        where.append("reference_id = %s")
+        args.append(reference_id)
+    args += [limit, offset]
     return db.query(
-        "SELECT * FROM subscriptions WHERE caller_id = %s"
-        " ORDER BY created_at DESC LIMIT %s OFFSET %s",
-        (caller_id, limit, offset))
+        "SELECT * FROM subscriptions WHERE " + " AND ".join(where) +
+        " ORDER BY created_at DESC LIMIT %s OFFSET %s", tuple(args))
 
 
 def rotate_trade_no(sub_id, merchant_trade_no: str, fields_json: str):

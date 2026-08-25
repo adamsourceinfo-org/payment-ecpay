@@ -41,7 +41,12 @@ class SubscriptionCreate(BaseModel):
     trade_desc: Optional[str] = Field(default=None, max_length=200)
     period_type: str = Field(default="M", description="D 日 / M 月 / Y 年")
     frequency: int = Field(default=1, description="每幾個週期扣一次")
-    exec_times: int = Field(default=99, description="總共扣幾次，至少 2")
+    # 綠界**沒有「無限期直到取消」**這個選項，ExecTimes 是必填。
+    # 預設用月週期的上限（999 期 ≈ 83 年），讓「訂閱到取消為止」是預設行為 ——
+    # 設小一點的話會在某個月無預警停扣，而那通常不是想要的。
+    # 要做「固定期數後自動結束」就明確傳期數。
+    exec_times: int = Field(default=999, description="總共扣幾次，至少 2；"
+                                                     "綠界沒有無限期選項")
     return_url: Optional[str] = None
     custom1: Optional[str] = Field(default=None, max_length=50)
     custom2: Optional[str] = Field(default=None, max_length=50)

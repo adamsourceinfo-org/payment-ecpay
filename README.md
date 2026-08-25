@@ -64,6 +64,32 @@ curl -s "$BASE/v1/events?after=0" -H "X-API-Key: $KEY"             # 拉事件
 `/ecpay/checkout/{token}`、`/ecpay/return`、`/ecpay/period-return`、
 `/ecpay/payment-info`、`/ecpay/order-result`。
 
+## 訂閱要設幾期？
+
+綠界**沒有「無限期直到取消」**這個選項，`exec_times` 是必填（下限 2、月週期上限 999）。
+
+| 想要的效果 | `exec_times` |
+|---|---|
+| 訂閱到取消為止（一般月費） | `999`（≈83 年，也是預設值），靠 `cancel` 停止 |
+| 固定期數後自動結束 | 例如 `12`，跑完綠界的 `ecpay_exec_status` 會變 `completed` |
+
+## 查一筆訂閱／訂單
+
+```bash
+# 用我們的 id
+curl -s "$BASE/v1/subscriptions/{id}" -H "X-API-Key: $KEY"
+
+# 只記得自己的 reference_id 也查得到
+curl -s "$BASE/v1/subscriptions?reference_id=my-sub-001" -H "X-API-Key: $KEY"
+
+# 要綠界端的權威狀態（會打上游，別高頻呼叫）
+curl -s "$BASE/v1/subscriptions/{id}?refresh=true" -H "X-API-Key: $KEY"
+```
+
+`status` 是**我們的**紀錄；`ecpay_exec_status_text`（`running` / `terminated` /
+`completed`）是**綠界的** —— 「下個月還會不會扣款」看後者，而且只有
+`?refresh=true` 之後才有值。
+
 ## 會咬人的地方
 
 **定期定額的首期回呼跟一次性付款逐位元組相同。** `PeriodType` / `Frequency` /

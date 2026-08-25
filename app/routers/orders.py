@@ -112,10 +112,12 @@ def create_order(body: OrderCreate, request: Request,
 
 @router.get("")
 def list_orders(status: Optional[str] = None,
+                reference_id: Optional[str] = None,
                 limit: int = Query(default=50, ge=1, le=200),
                 offset: int = Query(default=0, ge=0),
                 caller: Caller = Depends(require("orders:read"))):
-    rows = store.list_(caller.caller_id, status=status, limit=limit, offset=offset)
+    rows = store.list_(caller.caller_id, status=status, reference_id=reference_id,
+                       limit=limit, offset=offset)
     return {"items": [_out(r) for r in rows]}
 
 
