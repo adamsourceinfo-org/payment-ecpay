@@ -43,3 +43,12 @@ def test_placeholder_itself_never_tries_to_upgrade(monkeypatch):
     store.record_charge("s1", gwsr="first:S1", amount=5, rtn_code="1",
                         auth_code=None, process_date="2026/08/24 23:18:02")
     assert not any("UPDATE" in c for c in db.calls)
+
+
+def test_exec_status_is_translated():
+    """綠界的 ExecStatus 是 0/1/2，翻成字省得每個 caller 自己查文件。
+    這個欄位是「下個月還會不會扣款」的權威答案。"""
+    from app.routers.subscriptions import EXEC_STATUS
+    assert EXEC_STATUS["1"] == "running"
+    assert EXEC_STATUS["0"] == "terminated"     # 取消續訂後就是這個
+    assert EXEC_STATUS["2"] == "completed"      # 約定期數跑完

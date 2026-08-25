@@ -66,6 +66,13 @@ def set_totals(sub_id, times: int, amount: int):
         " WHERE id = %s RETURNING *", (times, amount, sub_id), fetch="one")
 
 
+def set_exec_status(sub_id, exec_status: str):
+    """綠界端的執行狀態。0 已終止 / 1 執行中 / 2 執行完成。"""
+    return db.query(
+        "UPDATE subscriptions SET ecpay_exec_status = %s, updated_at = now()"
+        " WHERE id = %s RETURNING *", (exec_status, sub_id), fetch="one")
+
+
 def record_charge(sub_id, *, gwsr, amount, rtn_code, auth_code, process_date):
     """回新的扣款 id；綠界重送造成的重複回 None。gwsr 是天然的去重鍵。
 

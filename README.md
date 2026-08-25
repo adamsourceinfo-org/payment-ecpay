@@ -74,6 +74,12 @@ curl -s "$BASE/v1/events?after=0" -H "X-API-Key: $KEY"             # 拉事件
 **取消訂閱不會退錢。** `cancel` 只停後續扣款，已收的不動 ——
 caller 應該讓權限給滿最後一期。而且**終止後無法重新啟用**，只能重開一張新單。
 
+**要確認「下個月還會不會扣款」，看 `ecpay_exec_status`**（呼叫
+`GET /v1/subscriptions/{id}?refresh=true` 才會更新）：`running` 執行中、
+`terminated` 已終止、`completed` 期數跑完。那是**綠界端**的狀態，
+比本地的 `status` 有權威性。實測：取消前 `running`、取消後 `terminated`，
+而 `total_success_times` 停在 1 —— 約定 12 期只扣了第一期。
+
 **退款在測試環境其實可以用。** 綠界文件寫測試環境不提供，實測是錯的 ——
 對真實授權過的 stage 訂單送 `Action=N` 會回 `Succeeded.`。所以退款不依環境擋。
 

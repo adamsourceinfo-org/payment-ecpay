@@ -20,6 +20,9 @@ from app.urls import base_url
 
 router = APIRouter(prefix="/v1/subscriptions", tags=["subscriptions"])
 
+# 綠界的 ExecStatus。翻成字給 caller 看，省得每個 caller 自己查文件。
+EXEC_STATUS = {"0": "terminated", "1": "running", "2": "completed"}
+
 
 def _out(row: dict, *, base: str = None, charges=None) -> dict:
     d = {
@@ -37,6 +40,12 @@ def _out(row: dict, *, base: str = None, charges=None) -> dict:
         "total_success_amount": row["total_success_amount"],
         "first_charged_at": row.get("first_charged_at"),
         "cancelled_at": row.get("cancelled_at"),
+        # 綠界端的執行狀態 —— **「下個月還會不會扣款」的權威答案**。
+        # 本地的 status 只是我們自己的紀錄；這個欄位是綠界怎麼說。
+        # 只有呼叫過 ?refresh=true 才會有值。
+        "ecpay_exec_status": row.get("ecpay_exec_status"),
+        "ecpay_exec_status_text": EXEC_STATUS.get(
+            str(row.get("ecpay_exec_status")), None),
         "created_at": row["created_at"],
     }
     if base and row.get("checkout_token"):
@@ -127,6 +136,8 @@ def get_subscription(sub_id: str, refresh: bool = False,
             raise upstream_error(e)
         # **只有綠界真的回了這些欄位才更新。** 讀不到就當作沒查到，
         # 絕不能用 0 覆蓋回呼存下來的正確數字 —— 對帳把資料弄丟比不對帳更糟。
+        if data.get("ExecStatus") is not None:
+            row = store.set_exec_status(row["id"], str(data["ExecStatus"]))
         if "TotalSuccessTimes" in data:
             times = int(data.get("TotalSuccessTimes") or 0)
             total = int(data.get("TotalSuccessAmount") or 0)
