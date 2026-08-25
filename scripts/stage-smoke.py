@@ -123,12 +123,11 @@ def run_checks():
           s == 400 and b["detail"]["field"] == "status", (s, b))
 
     print("\n【定期定額參數驗證】")
+    # exec_times 刻意不開放給 caller（服務內部固定 999），所以沒有它的驗證分支
     for kw, field in [({"period_type": "W"}, "period_type"),
-                      ({"frequency": 13}, "frequency"),
-                      ({"exec_times": 1}, "exec_times")]:
+                      ({"frequency": 13}, "frequency")]:
         body = {"reference_id": ref("subbad"), "amount": 100,
-                "item_name": "x", "period_type": "M", "frequency": 1,
-                "exec_times": 12}
+                "item_name": "x", "period_type": "M", "frequency": 1}
         body.update(kw)
         s, b = call("POST", "/v1/subscriptions", body)
         check(f"拒絕不合法的 {field}",
@@ -166,11 +165,12 @@ def run_create():
     s, b = call("POST", "/v1/subscriptions", {
         "reference_id": ref("sub"), "amount": 5,
         "item_name": "端對端測試-月訂閱", "period_type": "M",
-        "frequency": 1, "exec_times": 12,
+        "frequency": 1,
         "return_url": "https://example.com/subscribed"})
     check("建訂閱 201", s == 201, (s, b))
-    check("週期參數如實回報",
-          (b.get("period_type"), b.get("frequency"), b.get("exec_times")) == ("M", 1, 12), b)
+    check("週期參數如實回報", (b.get("period_type"), b.get("frequency")) == ("M", 1), b)
+    check("期數由服務固定成 999（caller 不能設）", b.get("exec_times") == 999,
+          b.get("exec_times"))
     state["subscription"] = {"id": b["id"], "url": b.get("checkout_url"),
                              "trade_no": b["merchant_trade_no"]}
     print(f"     checkout_url: {b.get('checkout_url')}")

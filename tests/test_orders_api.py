@@ -319,3 +319,37 @@ def test_list_filters_are_scoped_to_the_caller(client, monkeypatch):
                         lambda cid, **kw: seen.update(caller=cid, **kw) or [])
     client.get("/v1/orders?reference_id=shared", headers=H)
     assert seen["caller"] == "c1"
+
+
+def test_subscription_ignores_caller_supplied_exec_times(client, monkeypatch):
+    """**exec_times 不開放給 caller。**
+
+    綠界沒有「無限期直到取消」的選項，ExecTimes 是必填 —— 但那是綠界的
+    實作細節。讓 caller 填一個有限數字，遲早有人填 12 然後在第 13 個月
+    才發現訂閱無預警停掉。訂閱的語意就是「到取消為止」。
+    """
+    from app.routers import subscriptions as sub_router
+    from app.ecpay.subscriptions import FIXED_EXEC_TIMES
+    seen = {}
+    monkeypatch.setattr(sub_router.store, "get_by_reference",
+                        lambda cid, ref: None)
+    monkeypatch.setattr(sub_router.ec, "checkout_fields",
+                        lambda **kw: seen.update(kw.get("period") or {}) or {})
+    monkeypatch.setattr(sub_router.attempts_store, "record", lambda *a: None)
+    monkeypatch.setattr(sub_router.store, "create",
+                        lambda **kw: {"id": "s1", "reference_id": kw["reference_id"],
+                                      "merchant_trade_no": kw["merchant_trade_no"],
+                                      "period_amount": kw["period_amount"],
+                                      "period_type": kw["period_type"],
+                                      "frequency": kw["frequency"],
+                                      "exec_times": kw["exec_times"],
+                                      "status": "created", "total_success_times": 0,
+                                      "total_success_amount": 0, "created_at": None,
+                                      "checkout_token": None})
+    r = client.post("/v1/subscriptions", headers=H, json={
+        "reference_id": "s-1", "amount": 100, "item_name": "x",
+        "period_type": "M", "frequency": 1,
+        "exec_times": 3})                       # caller 亂傳，應該被忽略
+    assert r.status_code == 201
+    assert seen["exec_times"] == FIXED_EXEC_TIMES == 999
+    assert r.json()["exec_times"] == 999

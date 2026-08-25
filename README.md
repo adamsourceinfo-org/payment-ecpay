@@ -64,14 +64,13 @@ curl -s "$BASE/v1/events?after=0" -H "X-API-Key: $KEY"             # 拉事件
 `/ecpay/checkout/{token}`、`/ecpay/return`、`/ecpay/period-return`、
 `/ecpay/payment-info`、`/ecpay/order-result`。
 
-## 訂閱要設幾期？
+## 訂閱的期數不用（也不能）設
 
-綠界**沒有「無限期直到取消」**這個選項，`exec_times` 是必填（下限 2、月週期上限 999）。
+綠界**沒有「無限期直到取消」**這個選項，`ExecTimes` 是必填 —— 但那是綠界的
+實作細節，本服務**不開放 caller 設定**，一律固定 999 期（月週期 ≈83 年）。
 
-| 想要的效果 | `exec_times` |
-|---|---|
-| 訂閱到取消為止（一般月費） | `999`（≈83 年，也是預設值），靠 `cancel` 停止 |
-| 固定期數後自動結束 | 例如 `12`，跑完綠界的 `ecpay_exec_status` 會變 `completed` |
+理由：讓 caller 填一個有限數字，遲早有人填了 12，然後在第 13 個月才發現訂閱
+無預警停掉。訂閱的語意就是「到取消為止」，要停就呼叫 `cancel`。
 
 ## 查一筆訂閱／訂單
 

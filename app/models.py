@@ -41,12 +41,11 @@ class SubscriptionCreate(BaseModel):
     trade_desc: Optional[str] = Field(default=None, max_length=200)
     period_type: str = Field(default="M", description="D 日 / M 月 / Y 年")
     frequency: int = Field(default=1, description="每幾個週期扣一次")
-    # 綠界**沒有「無限期直到取消」**這個選項，ExecTimes 是必填。
-    # 預設用月週期的上限（999 期 ≈ 83 年），讓「訂閱到取消為止」是預設行為 ——
-    # 設小一點的話會在某個月無預警停扣，而那通常不是想要的。
-    # 要做「固定期數後自動結束」就明確傳期數。
-    exec_times: int = Field(default=999, description="總共扣幾次，至少 2；"
-                                                     "綠界沒有無限期選項")
+    # **刻意不開放 exec_times。** 綠界沒有「無限期直到取消」的選項，
+    # ExecTimes 是必填 —— 但那是綠界的實作細節，不該外洩給 caller。
+    # 讓 caller 填一個有限的數字，遲早會有人填了 12 然後在第 13 個月
+    # 發現訂閱無預警停掉。訂閱的語意就是「到取消為止」，
+    # 期數由服務內部固定成月週期上限（見 ecpay/subscriptions.py）。
     return_url: Optional[str] = None
     custom1: Optional[str] = Field(default=None, max_length=50)
     custom2: Optional[str] = Field(default=None, max_length=50)

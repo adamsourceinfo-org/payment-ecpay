@@ -73,7 +73,7 @@ def main():
     s, sub = api("POST", "/v1/subscriptions", {
         "reference_id": f"manualsub-{stamp}", "amount": 5,
         "item_name": "人工驗證-月訂閱", "period_type": "M",
-        "frequency": 1, "exec_times": 12})
+        "frequency": 1})
     check("建立定期定額", s == 201, (s, sub))
     if _failed:
         sys.exit(1)

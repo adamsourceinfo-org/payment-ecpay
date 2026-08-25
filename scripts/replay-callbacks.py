@@ -80,7 +80,7 @@ def main():
     print("\n【建立訂閱】")
     s, sub = api("POST", "/v1/subscriptions", {
         "reference_id": ref, "amount": 199, "item_name": "重放測試-月訂閱",
-        "period_type": "M", "frequency": 1, "exec_times": 12})
+        "period_type": "M", "frequency": 1})
     check("建立成功", s == 201, (s, sub))
     if s != 201:
         return

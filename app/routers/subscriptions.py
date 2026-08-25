@@ -69,8 +69,9 @@ def create_subscription(body: SubscriptionCreate, request: Request,
             "這個環境沒有開通信用卡，無法建立定期定額", field="choose_payment"))
     try:
         amount = validate_amount(body.amount)
+        # 期數固定，不由 caller 決定 —— 訂閱的語意就是「到取消為止」
         period = ecsub.validate_period(body.period_type, body.frequency,
-                                       body.exec_times)
+                                       ecsub.FIXED_EXEC_TIMES)
     except FieldError as e:
         raise bad_request(e)
 

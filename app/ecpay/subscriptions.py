@@ -19,6 +19,11 @@ FREQUENCY_RANGE = {
 EXEC_TIMES_MAX = {"D": 999, "M": 999, "Y": 99}
 EXEC_TIMES_MIN = 2
 
+# 本服務固定用的期數。綠界沒有「無限期直到取消」，ExecTimes 必填；
+# 用月週期的上限（999 期 ≈ 83 年）讓「到取消為止」成為唯一語意。
+# 不開放 caller 設定 —— 填了有限數字遲早有人在第 N+1 個月才發現訂閱停了。
+FIXED_EXEC_TIMES = 999
+
 
 def validate_period(period_type: str, frequency: int, exec_times: int) -> dict:
     """在進門就擋。送到綠界才被拒的話，錯誤訊息對 caller 沒有幫助。"""
