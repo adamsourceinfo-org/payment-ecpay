@@ -62,3 +62,22 @@ def test_utc_input_is_converted():
 def test_always_offers_a_fallback(actions):
     """兩個動作互斥、失敗沒有部分效果，所以一定要有退路。"""
     assert len(set(actions)) == 2
+
+
+def test_partial_refund_only_allows_refund_action():
+    """**部分退款只能用 R。**
+
+    `N` 是「放棄授權」—— 整筆釋放，沒有部分的概念。實測踩過：
+    對一筆 NT$30、未關帳的訂單送 `N` 且 `TotalAmount=10`，綠界回 `Succeeded.`，
+    但整筆授權都被釋放了（再送一次回 `error_nopay`）。
+    若把它當成「退了 10、還剩 20」，帳就錯了 —— 客戶其實全額拿回去。
+    """
+    assert actions_for(tp(2026, 8, 25, 9, 0), False,
+                       now=tp(2026, 8, 25, 10, 0), partial=True) == ["R"]
+    assert actions_for(tp(2026, 8, 23, 9, 0), True,
+                       now=tp(2026, 8, 25, 10, 0), partial=True) == ["R"]
+
+
+def test_full_refund_still_has_the_fallback():
+    assert len(actions_for(tp(2026, 8, 25, 9, 0), False,
+                           now=tp(2026, 8, 25, 10, 0), partial=False)) == 2

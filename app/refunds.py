@@ -32,12 +32,18 @@ def last_closing_at(now: datetime) -> datetime:
     return today if now >= today else today - timedelta(days=1)
 
 
-def actions_for(paid_at: datetime, closed: bool, now: datetime = None) -> list:
-    """回傳要依序嘗試的動作。第一個是最可能對的。"""
-    if closed:
-        return ["R", "N"]
-    if paid_at is None:
-        # 不知道何時付的 —— 用比較常見的情況當首選
+def actions_for(paid_at: datetime, closed: bool, now: datetime = None,
+                partial: bool = False) -> list:
+    """回傳要依序嘗試的動作。第一個是最可能對的。
+
+    **部分退款只能用 `R`。** `N` 是「放棄授權」—— 整筆釋放，沒有部分的概念。
+    實測確認：對一筆 NT$30、尚未關帳的訂單送 `N` 且 `TotalAmount=10`，
+    綠界回 `Succeeded.`，但**整筆授權都被釋放了**（再送一次回 `error_nopay`）。
+    若把它當成「退了 10、還剩 20 可退」，帳就錯了 —— 客戶其實全額拿回去。
+    """
+    if partial:
+        return ["R"]
+    if closed or paid_at is None:
         return ["R", "N"]
     now = now or datetime.now(TAIPEI)
     return ["R", "N"] if paid_at.astimezone(TAIPEI) < last_closing_at(now) else ["N", "R"]

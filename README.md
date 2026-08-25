@@ -53,7 +53,7 @@ curl -s "$BASE/v1/events?after=0" -H "X-API-Key: $KEY"             # 拉事件
 | `POST /v1/orders` | `orders:write` | 建單。`reference_id` 是冪等鍵，重複回原本那筆 |
 | `GET /v1/orders` | `orders:read` | 列出 |
 | `GET /v1/orders/{id}` | `orders:read` | 查單，`?refresh=true` 去綠界對帳 |
-| `POST /v1/orders/{id}/refund` | `orders:write` | 退款，**僅信用卡、僅正式環境** |
+| `POST /v1/orders/{id}/refund` | `orders:write` | 退款，**僅信用卡**（其他付款方式綠界沒有退款 API） |
 | `POST /v1/subscriptions` | `subscriptions:write` | 定期定額 |
 | `GET /v1/subscriptions/{id}` | `subscriptions:read` | 查，`?refresh=true` 帶每期明細 |
 | `POST /v1/subscriptions/{id}/cancel` | `subscriptions:write` | 終止，**不可復原** |
@@ -94,7 +94,7 @@ caller 應該讓權限給滿最後一期。而且**終止後無法重新啟用**
 | `ECPAY_ENV` | `stage` | `production` |
 | 商店代號 | `3002607`（綠界公開的測試特店） | `3017099`（Adam Studio） |
 | 定期定額 | 可用 | 可用（實證：2026-08-19 有成功的月週期單） |
-| 退款 API | **不存在** | 可用 |
+| 退款 API | 可用（文件說沒有，實測有） | 可用 |
 | 海外卡 | — | 不支援（帳號資格） |
 
 dev 用的測試特店是**全球開發者共用**的，所以 `MerchantTradeNo` 一律高熵亂碼 ——

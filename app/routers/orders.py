@@ -188,7 +188,10 @@ def refund(order_id: str, body: RefundCreate,
     # 已關帳要送 R（退刷），未關帳要送 N（放棄授權），送錯會失敗。
     # 依綠界的每日自動關帳時間推測先送哪一個，被拒就改送另一個 ——
     # 兩者互斥、失敗沒有部分效果，所以重試是安全的。
-    attempts, errors = refunds.actions_for(row.get("paid_at"), row["closed"]), []
+    partial = amount < remaining
+    attempts = refunds.actions_for(row.get("paid_at"), row["closed"],
+                                   partial=partial)
+    errors = []
     for action in attempts:
         try:
             ec.do_action(merchant_trade_no=row["merchant_trade_no"],
@@ -198,11 +201,16 @@ def refund(order_id: str, body: RefundCreate,
         except ECPayError as e:
             errors.append((action, e))
     else:
-        # 兩個都失敗 —— 把兩次的原文都帶回去，不然沒人查得出是哪一步錯
-        raise HTTPException(status_code=502, detail={
-            "error": "ecpay_upstream",
-            "attempts": [{"action": a, "rtn_code": e.rtn_code,
-                          "rtn_msg": e.rtn_msg} for a, e in errors]})
+        detail = {"error": "ecpay_upstream",
+                  "attempts": [{"action": a, "rtn_code": e.rtn_code,
+                                "rtn_msg": e.rtn_msg} for a, e in errors]}
+        if partial:
+            # 部分退款只有 R 可用，而 R 失敗多半是因為還沒關帳。
+            # 這個情況要說得夠清楚，caller 才知道該等還是該改做全額退款。
+            detail["message"] = (
+                "部分退款需要訂單已關帳。綠界每日 20:15~20:30 自動關帳，"
+                "在那之前只能整筆取消授權（不帶 amount 呼叫即為全額退款）。")
+        raise HTTPException(status_code=502, detail=detail)
 
     # 記住這筆到底是不是已關帳，同一筆的後續部分退款就直接命中
     if (action == "R") != bool(row["closed"]):

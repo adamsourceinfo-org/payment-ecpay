@@ -267,3 +267,33 @@ def test_refresh_never_zeroes_out_known_totals(client, rows, monkeypatch):
     d = client.get("/v1/subscriptions/s1?refresh=true", headers=H).json()
     assert saved == {}                       # 完全沒去改
     assert d["total_success_times"] == 3     # 原本的數字還在
+
+
+def test_partial_refund_never_sends_abandon(client, rows, monkeypatch):
+    """部分退款絕對不能送 N —— 那會把整筆授權釋放掉，帳就對不起來。"""
+    tried = []
+    monkeypatch.setattr(router_mod.ec, "do_action",
+                        lambda **kw: tried.append(kw["action"]) or {"RtnCode": "1"})
+    monkeypatch.setattr(router_mod.store, "set_closed", lambda *a: None)
+    monkeypatch.setattr(router_mod.store, "add_refund",
+                        lambda oid, amt, fully: _order(refunded_amount=amt,
+                                                       status="partially_refunded"))
+    rows["o1"] = _order(amount=30, refunded_amount=0, closed=False, paid_at=None)
+    r = client.post("/v1/orders/o1/refund", headers=H, json={"amount": 10})
+    assert r.status_code == 200
+    assert tried == ["R"], "部分退款只能送 R"
+
+
+def test_partial_refund_failure_explains_the_closing_window(client, rows,
+                                                            monkeypatch):
+    """R 失敗多半是還沒關帳 —— 要說清楚，caller 才知道該等還是改全額退。"""
+    from app.errors import ECPayError
+    monkeypatch.setattr(router_mod.ec, "do_action",
+                        lambda **kw: (_ for _ in ()).throw(
+                            ECPayError("10000002", "更新失敗.(error_amount_R)")))
+    rows["o1"] = _order(amount=30, refunded_amount=0, closed=False, paid_at=None)
+    r = client.post("/v1/orders/o1/refund", headers=H, json={"amount": 10})
+    assert r.status_code == 502
+    d = r.json()["detail"]
+    assert [a["action"] for a in d["attempts"]] == ["R"]
+    assert "20:15" in d["message"] and "全額退款" in d["message"]
