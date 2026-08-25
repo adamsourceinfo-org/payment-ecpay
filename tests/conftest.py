@@ -19,7 +19,6 @@ class FakeSettings:
     query_period_url = "https://payment-stage.ecpay.com.tw/Cashier/QueryCreditCardPeriodInfo"
     period_action_url = "https://payment-stage.ecpay.com.tw/Cashier/CreditCardPeriodAction"
     do_action_url = "https://payment.ecpay.com.tw/CreditDetail/DoAction"
-    do_action_available = False          # stage 沒有退款 API
     merchant_id = "3002607"
     hash_key = TEST_KEY
     hash_iv = TEST_IV

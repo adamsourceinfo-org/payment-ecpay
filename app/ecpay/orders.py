@@ -103,8 +103,8 @@ def do_action(*, merchant_trade_no: str, trade_no: str, action: str,
               amount: int) -> dict:
     """信用卡請退款。
 
-    **測試環境沒有這支 API**（綠界：「因無法提供實際授權，故無法使用此 API」），
-    所以呼叫端要先看 settings.do_action_available，不要送出去等它失敗。
+    綠界文件說測試環境沒有這支 API，**實測是錯的** —— stage 上可用
+    （對真實授權過的 stage 訂單送 N 會回 Succeeded）。所以不依環境擋。
 
     action:
       R = 退刷（已關帳的訂單）

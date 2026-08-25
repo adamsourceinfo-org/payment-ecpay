@@ -91,13 +91,23 @@ def test_refund_rejects_over_remaining(client, rows):
     assert "只剩 20" in r.json()["detail"]["message"]
 
 
-def test_refund_blocked_on_stage_with_explanation(client, rows):
-    """綠界測試環境沒有 DoAction。與其送出去等一個難懂的失敗，不如明說。"""
+def test_refund_is_not_blocked_by_environment(client, rows, monkeypatch):
+    """退款**不依環境擋**。
+
+    綠界文件寫「測試環境因無法提供實際授權，故無法使用此 API」，實測是錯的：
+    對一筆真實授權過的 stage 訂單送 `Action=N` 會回 `RtnCode=1 Succeeded.`。
+    擋掉的話反而讓退款這條路在 dev 永遠測不到。
+    """
+    seen = {}
+    monkeypatch.setattr(router_mod.ec, "do_action",
+                        lambda **kw: seen.update(kw) or {"RtnCode": "1"})
+    monkeypatch.setattr(router_mod.store, "set_closed", lambda *a: None)
+    monkeypatch.setattr(router_mod.store, "add_refund",
+                        lambda oid, amt, fully: _order(refunded_amount=amt,
+                                                       status="refunded"))
     rows["o1"] = _order()
     r = client.post("/v1/orders/o1/refund", headers=H, json={})
-    assert r.status_code == 400
-    d = r.json()["detail"]
-    assert d["field"] == "environment" and "測試環境" in d["message"]
+    assert r.status_code == 200 and seen["action"] in ("R", "N")
 
 
 def test_refund_picks_action_by_closed_state(client, rows, monkeypatch,
@@ -109,7 +119,6 @@ def test_refund_picks_action_by_closed_state(client, rows, monkeypatch,
     """
     from datetime import datetime, timedelta
     from app.refunds import TAIPEI
-    fake_settings.do_action_available = True
     seen = {}
     monkeypatch.setattr(router_mod.ec, "do_action",
                         lambda **kw: seen.update(kw) or {"RtnCode": "1"})
@@ -189,7 +198,6 @@ def test_refund_falls_back_to_the_other_action(client, rows, monkeypatch,
     而正式商店開著每日自動關帳 —— 隔天以後的退款一律會失敗。
     """
     from app.errors import ECPayError
-    fake_settings.do_action_available = True
     tried = []
 
     def fake_do_action(**kw):
@@ -213,7 +221,6 @@ def test_refund_falls_back_to_the_other_action(client, rows, monkeypatch,
 def test_refund_reports_both_failures(client, rows, monkeypatch, fake_settings):
     """兩個都失敗時要把兩次的原文都帶回去 —— 只給一個，沒人查得出是哪一步錯。"""
     from app.errors import ECPayError
-    fake_settings.do_action_available = True
 
     def always_fail(**kw):
         raise ECPayError("10200047", f"{kw['action']} 不允許")

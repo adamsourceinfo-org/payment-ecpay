@@ -185,12 +185,6 @@ def refund(order_id: str, body: RefundCreate,
         raise bad_request(InvalidField(
             f"可退金額只剩 {remaining}，要求 {amount}", field="amount"))
 
-    if not s.do_action_available:
-        # 測試環境沒有這支 API。與其送出去等一個難懂的失敗，不如明說。
-        raise bad_request(InvalidField(
-            "綠界測試環境不提供退款 API（官方：因無法提供實際授權），"
-            "退款只能在正式環境執行", field="environment"))
-
     # 已關帳要送 R（退刷），未關帳要送 N（放棄授權），送錯會失敗。
     # 依綠界的每日自動關帳時間推測先送哪一個，被拒就改送另一個 ——
     # 兩者互斥、失敗沒有部分效果，所以重試是安全的。

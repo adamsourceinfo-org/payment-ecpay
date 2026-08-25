@@ -36,8 +36,8 @@ def health(response: Response):
             "merchant_id": s.merchant_id,
             "credentials": "loaded" if (s.hash_key and s.hash_iv) else "missing",
             "allowed_payments": sorted(s.allowed_payments),
-            # 退款 API 在測試環境不存在，這不是故障，是上游的限制。
-            "refund_api": "available" if s.do_action_available else "stage-unavailable",
+            # 綠界文件說測試環境沒有退款 API，實測是錯的 —— 兩邊都能用。
+            "refund_api": "available",
         },
     }
 

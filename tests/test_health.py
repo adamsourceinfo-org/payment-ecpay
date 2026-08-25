@@ -42,7 +42,7 @@ def test_never_leaks_credentials(client, monkeypatch):
     assert "loaded" in body
 
 
-def test_reports_refund_api_unavailable_on_stage(client, monkeypatch):
-    """退款 API 在測試環境不存在。這不是故障，但要說出來。"""
+def test_reports_refund_api_available(client, monkeypatch):
+    """綠界文件說測試環境沒有退款 API，實測是錯的 —— 兩邊都回報可用。"""
     monkeypatch.setattr(db, "db_status", _ok)
-    assert client.get("/health").json()["ecpay"]["refund_api"] == "stage-unavailable"
+    assert client.get("/health").json()["ecpay"]["refund_api"] == "available"

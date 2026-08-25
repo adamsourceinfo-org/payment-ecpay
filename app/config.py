@@ -64,14 +64,17 @@ class Settings:
 
     @property
     def do_action_url(self) -> str:
-        """信用卡請退款。**測試環境不存在這支 API** —— 綠界文件明說
-        「因無法提供實際授權，故無法使用此 API」。stage 上呼叫必定失敗，
-        這是上游的限制，不是本服務的 bug。"""
-        return f"{self.ecpay_host}/CreditDetail/DoAction"
+        """信用卡請退款。
 
-    @property
-    def do_action_available(self) -> bool:
-        return self.ecpay_env == "production"
+        綠界文件寫「測試環境：因無法提供實際授權，故無法使用此 API」，
+        **但那是錯的** —— 實測 stage 上這支端點存在且可用：對一筆真實授權過的
+        stage 訂單送 `Action=N` 會回 `RtnCode=1 Succeeded.`，送 `Action=R`
+        則回 `10000002 更新失敗.(error_amount_R)`。
+        （stage 其實提供得了授權，走的是模擬 3D 驗證。）
+
+        所以不依環境擋 —— 擋了反而讓退款這條路在 dev 永遠測不到。
+        """
+        return f"{self.ecpay_host}/CreditDetail/DoAction"
 
     @property
     def db_configured(self) -> bool:
