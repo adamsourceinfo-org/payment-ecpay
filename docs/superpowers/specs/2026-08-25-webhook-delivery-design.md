@@ -968,10 +968,14 @@ runbook 第 7 步只傳 `webhooks:read,webhooks:write` ——
 - 消毒後可能相同的兩個 `caller_id`（例如 `a.b` 與 `a-b`）→ 名字**不同**
 - queue 不存在（Cloud Tasks 回 NOT_FOUND）→ 退回共用 queue，且 log ERROR
 
-**`grant-scope.sh`**
+**`grant-scope.sh`**（**沒有自動化測試** —— 這個 repo 沒有真 DB 測試，
+bash 腳本測不了。所以驗證方式是腳本自己印出 before/after 讓人肉眼確認，
+而 SQL 寫死成 `scopes || 新的` 再 DISTINCT，不留覆寫的餘地。）
+- 跑完要看到「原本 / 現在 / 新增幾個」三欄
 - 既有 scope 是 `orders:read, orders:write`，補 `webhooks:write` 之後
-  是**三個**，不是一個 —— 這條測試存在的唯一理由是擋掉覆寫式實作
-- 重複補同一個 scope 不會產生重複值
+  現在那欄要是**三個**。如果變成一個，就是有人把 SQL 改成覆寫了 ——
+  那會當場打斷 caller 在 prod 的金流
+- 沒有列出任何一列 = 這個 caller 沒有 active 的 key，什麼都沒改
 
 **ping**
 - body 的 `id` 是 `0`、`event_type` 是 `ping`

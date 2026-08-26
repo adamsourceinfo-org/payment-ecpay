@@ -24,6 +24,7 @@ class FakeStore:
         self.transactions = 0
         self.scheduled = []          # dispatch.schedule 的呼叫
         self.ensured = []            # dispatch.ensure 的呼叫
+        self.timeline = []           # 發生順序 —— 排程時機那條測試要用
 
     # --- events
     def record(self, dedupe_key, event_type, caller_id, kind, subject_id, raw,
@@ -44,11 +45,14 @@ def store(monkeypatch):
     def _fake_tx(_fs=fs):
         _fs.transactions += 1
         yield object()
+        _fs.timeline.append("交易 commit")
     monkeypatch.setattr(callbacks.db, "transaction", _fake_tx)
 
     # 推送的排程：這裡只記錄「有沒有被呼叫」。真正的投遞另外測。
-    monkeypatch.setattr(callbacks.dispatch, "schedule",
-                        lambda eid, cid, base, _fs=fs: _fs.scheduled.append((eid, cid)))
+    def _schedule(eid, cid, base, _fs=fs):
+        _fs.scheduled.append((eid, cid))
+        _fs.timeline.append("排程推送")
+    monkeypatch.setattr(callbacks.dispatch, "schedule", _schedule)
     monkeypatch.setattr(callbacks.dispatch, "ensure",
                         lambda key, base, _fs=fs: _fs.ensured.append(key))
 
@@ -82,10 +86,10 @@ def store(monkeypatch):
         for fn in ("mark_paid", "set_status", "mark_active", "record_charge",
                    "set_totals", "save_payment_info"):
             if hasattr(mod, fn):
-                monkeypatch.setattr(
-                    mod, fn,
-                    lambda *a, _l=label, _f=fn, _fs=fs, **k:
-                        _fs.calls.append((_l, _f, a, k)))
+                def _record(*a, _l=label, _f=fn, _fs=fs, **k):
+                    _fs.calls.append((_l, _f, a, k))
+                    _fs.timeline.append(f"{_l}.{_f}")
+                monkeypatch.setattr(mod, fn, _record)
     return fs
 
 
@@ -446,3 +450,21 @@ def test_導回不排推送(client, store):
     client.post("/ecpay/order-result", data=_order_return(),
                 follow_redirects=False)
     assert store.scheduled == [] and store.ensured == []
+
+
+def test_排程晚於狀態更新也晚於交易commit(client, store):
+    """⚠️ **這條是這個 repo 特有的，一定要有。**
+
+    `app/db.py` 每次 query 就 commit，所以「commit 之後才排程」這個條件
+    自動成立、卻保護不了真正的 race：mark_active() 那串是**後續**的獨立寫入。
+    一拿到 event id 就排程的話，Cloud Tasks 可以在幾十毫秒內送達，
+    caller 收到推送立刻回頭查 GET /v1/subscriptions/{id}，
+    讀到的是**還沒 active 的訂閱**。
+
+    這比壞掉難查得多 —— 它不是失敗，是偶爾看到舊狀態。
+    """
+    store.subs["S999"] = {"id": "sid-1", "caller_id": "c1", "period_amount": 100}
+    client.post("/ecpay/return", data=_order_return(trade_no="S999"))
+
+    t = store.timeline
+    assert t.index("sub.mark_active") < t.index("交易 commit") < t.index("排程推送"), t

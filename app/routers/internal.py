@@ -36,7 +36,11 @@ def _check(key: str) -> None:
     s = get_settings()
     if not s.push_configured:
         raise HTTPException(status_code=503, detail="推送尚未設定")
-    if not key or not hmac.compare_digest(key, s.internal_key):
+    # ⚠️ 一定要 encode 再比。`hmac.compare_digest` 的 str 版本只吃 ASCII，
+    # 而 HTTP header 可以帶 latin-1 字元 —— 隨便一個亂打的 key 就會拋
+    # TypeError，讓這支端點回 500 加一份 stack trace，而不是設計上的 401。
+    if not key or not hmac.compare_digest(key.encode("utf-8", "replace"),
+                                          s.internal_key.encode()):
         # 跟 API key 一樣：沒帶、錯的一律同一個回應，不幫攻擊者縮小範圍
         raise HTTPException(status_code=401, detail="invalid internal key")
 

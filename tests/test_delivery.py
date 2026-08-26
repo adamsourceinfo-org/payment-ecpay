@@ -183,7 +183,15 @@ def test_內部端點沒帶金鑰回401(client):
 
 
 def test_內部端點帶錯金鑰回401(client):
-    bad = {"X-Internal-Key": "wrong-key"}   # header 只能是 ASCII
+    bad = {"X-Internal-Key": "wrong-key"}
+    assert client.post("/internal/deliveries/d-1", headers=bad).status_code == 401
+
+
+def test_非ASCII的金鑰回401而不是500(client):
+    """⚠️ hmac.compare_digest 的 str 版本只吃 ASCII，而 HTTP header 可以帶
+    latin-1 字元 —— 不 encode 就比的話，隨便一個亂打的 key 會拋 TypeError，
+    讓這支端點吐 500 加一份 stack trace。"""
+    bad = {"X-Internal-Key": "猜的".encode("utf-8")}
     assert client.post("/internal/deliveries/d-1", headers=bad).status_code == 401
 
 

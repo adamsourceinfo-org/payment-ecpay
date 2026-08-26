@@ -36,7 +36,13 @@ PING_EVENT_TYPE = "ping"
 # sweep 一輪抓幾筆、最多處理幾筆。
 # ⚠️ 撞到 _MAX_PER_RUN 一定要 log —— 靜默截斷從外面看起來就像「已經全部補完了」。
 _BATCH = 500
-_MAX_PER_RUN = 5000
+# ⚠️ 這個數字的真正上限是**請求逾時**，不是記憶體或 DB。
+# 每筆補漏都要打一次 Cloud Tasks 的 create（~80ms），而 Cloud Run 的請求上限
+# 與 Scheduler 的 --attempt-deadline 都是 300 秒。設太大不會掉資料
+# （missing() 天然排除已建的，下一輪繼續），但 process 會先被砍 ——
+# 於是底下那個 truncated 的 WARNING **永遠印不出來**，
+# 而那正是「有上限就要說出來」這條規則存在的理由。
+_MAX_PER_RUN = 2000
 # 讀不到 queue 設定時的退路。刻意抓寬（真實窗口是 12 小時）：
 # 抓寬在兩個方向都安全 —— 不會誤判還在重試的，真死信最晚 24 小時內也看得到。
 _DEFAULT_WINDOW_SECONDS = 12 * 3600
