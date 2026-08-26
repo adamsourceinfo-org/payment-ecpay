@@ -22,6 +22,7 @@ import httpx
 from fastapi.encoders import jsonable_encoder
 
 from app.config import get_settings
+from app.event_view import item
 from app.store import deliveries as deliveries_store
 from app.store import events as events_store
 from app.store import webhook_endpoints as endpoints_store
@@ -65,14 +66,14 @@ def ping_payload() -> dict:
     """⚠️ `id` 固定是 0。caller 照原則 3 用 id 去重的話，第二次 ping 會被
     自己的去重擋掉、看起來像沒送到 —— 所以 README 必須寫
     「`event_type == "ping"` 要在去重之前就 return」。"""
-    return {
+    return item({
         "id": 0,
         "event_type": PING_EVENT_TYPE,
         "subject_kind": None,
         "subject_id": None,
         "payload": {},
         "received_at": datetime.now(timezone.utc),
-    }
+    })
 
 
 def encode(body: dict) -> bytes:

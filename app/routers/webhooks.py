@@ -67,7 +67,7 @@ def _delivery_out(row: dict) -> dict:
 
 
 @router.put("/v1/webhook-endpoint")
-def put_endpoint(body: WebhookEndpointPut, request: Request,
+def put_endpoint(body: WebhookEndpointPut,
                  caller: Caller = Depends(require("webhooks:write"))):
     """註冊或更新推送網址。upsert，**保留既有的 id**。
 

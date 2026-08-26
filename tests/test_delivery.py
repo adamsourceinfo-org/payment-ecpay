@@ -89,16 +89,15 @@ def wired(monkeypatch, sent):
 # --- payload 形狀 -----------------------------------------------------
 
 def test_推送的body逐欄等於GET_events的items元素():
-    """caller 因此只要寫一份 parser。兩個形狀就是兩份程式碼、兩組 bug，
-    而其中一份平常不會執行 —— 那是最糟的一種程式碼。"""
-    from app.routers import events as events_router     # noqa: F401
+    """兩條出口共用 app/event_view.py 的同一個函式 ——
+    形狀不會漂移，因為根本沒有兩份。"""
+    from app.event_view import item
+    from app.routers import events as events_router
 
     row = _event()
-    body = dispatch.event_payload(row)
-    # 這幾個鍵與 app/routers/events.py 的 list_events 逐字相同
-    assert list(body) == ["id", "event_type", "subject_kind", "subject_id",
-                          "payload", "received_at"]
-    assert "caller_id" not in body      # caller 自己知道自己是誰，不用回給他
+    assert dispatch.event_payload(row) == item(row)
+    assert events_router.item is item        # 拉取那條也用同一個
+    assert "caller_id" not in item(row)      # caller 自己知道自己是誰
 
 
 def test_ping的body形狀一樣但id是0():
