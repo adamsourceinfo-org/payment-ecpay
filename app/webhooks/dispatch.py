@@ -52,34 +52,35 @@ def internal_url(base_url: str, delivery_id) -> str:
     return f"{base_url.rstrip('/')}/internal/deliveries/{delivery_id}"
 
 
-def event_payload(row: dict) -> dict:
-    """推送的 body **就是** `GET /v1/events` 回應裡 items[] 的一個元素，逐欄相同。
+# 推送的 body 就是 `GET /v1/events` 回應裡 items[] 的一個元素 ——
+# 形狀由 app/event_view.py 的 item() 定義**一次**，這裡直接用它。
+#
+# ⚠️ 不要在這個檔案裡再寫一份「id / event_type / subject_kind / …」的 dict。
+# 曾經有過：event_payload() 手抄了一份，而盯著它的測試寫成
+# `event_payload(row) == item(row)` —— 那只在兩份**已經漂移之後**才會紅，
+# 抓不到「有兩份」本身。兩個形狀就是兩份程式碼、兩組 bug，
+# 而其中一份平常不會執行。
 
-    caller 因此只要寫一份 parser，兩條路都能吃。兩個形狀就是兩份程式碼、
-    兩組 bug，而其中一份平常不會執行 —— 那是最糟的一種程式碼。
+
+def ping_row() -> dict:
+    """合成一列「像事件的 row」給 item() 取形狀。
+
+    ⚠️ 這裡列出欄位名是在**提供值**，不是在重新描述形狀 ——
+    真正的形狀仍然由 item() 決定。item() 加了欄位而這裡沒跟上的話，
+    會當場 KeyError，不會靜靜地送出一個少一欄的 body。
+
+    ⚠️ `id` 固定是 0。caller 照原則 3 用 id 去重的話，第二次 ping 會被
+    自己的去重擋掉、看起來像沒送到 —— 所以 README 必須寫
+    「`event_type == "ping"` 要在去重之前就 return」。
     """
     return {
-        "id": row["id"],
-        "event_type": row["event_type"],
-        "subject_kind": row["subject_kind"],
-        "subject_id": row["subject_id"],
-        "payload": row["payload"],
-        "received_at": row["received_at"],
-    }
-
-
-def ping_payload() -> dict:
-    """⚠️ `id` 固定是 0。caller 照原則 3 用 id 去重的話，第二次 ping 會被
-    自己的去重擋掉、看起來像沒送到 —— 所以 README 必須寫
-    「`event_type == "ping"` 要在去重之前就 return」。"""
-    return item({
         "id": 0,
         "event_type": PING_EVENT_TYPE,
         "subject_kind": None,
         "subject_id": None,
         "payload": {},
         "received_at": datetime.now(timezone.utc),
-    })
+    }
 
 
 def encode(body: dict) -> bytes:
@@ -192,13 +193,13 @@ def deliver(delivery_id) -> tuple:
     s = get_settings()
 
     if row["event_id"] is None:
-        body = ping_payload()
+        body = item(ping_row())
     else:
         event = events_store.get(row["event_id"])
         if not event:
             deliveries_store.mark_failed(delivery_id, None, "事件不見了")
             return "failed", None
-        body = event_payload(event)
+        body = item(event)
 
     raw = encode(body)
     t = int(datetime.now(timezone.utc).timestamp())

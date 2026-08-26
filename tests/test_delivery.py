@@ -88,21 +88,46 @@ def wired(monkeypatch, sent):
 
 # --- payload 形狀 -----------------------------------------------------
 
-def test_推送的body逐欄等於GET_events的items元素():
-    """兩條出口共用 app/event_view.py 的同一個函式 ——
-    形狀不會漂移，因為根本沒有兩份。"""
+def test_兩條出口用的是同一個形狀函式():
+    """`item()` 不是「兩份程式碼加一條測試盯著別漂移」，是**只有一份**。
+
+    ⚠️ 這條測試刻意**不是** `dispatch.event_payload(row) == item(row)`。
+    曾經就是那樣寫的，而 dispatch 裡確實躺著一份手抄的 dict ——
+    兩份內容當時剛好一樣，所以測試是綠的。那種測試只在漂移**之後**才紅，
+    抓不到「有兩份」本身。
+    """
     from app.event_view import item
     from app.routers import events as events_router
 
-    row = _event()
-    assert dispatch.event_payload(row) == item(row)
-    assert events_router.item is item        # 拉取那條也用同一個
-    assert "caller_id" not in item(row)      # caller 自己知道自己是誰
+    assert events_router.item is item        # 拉取那條
+    assert dispatch.item is item             # 推送那條
+    assert "caller_id" not in item(_event())  # caller 自己知道自己是誰
+
+
+def test_實際送出去的body就是item的輸出(wired, sent, fake_settings):
+    """測真正走過的那條路，不是測一個 helper。"""
+    from app.event_view import item
+    from fastapi.encoders import jsonable_encoder
+
+    dispatch.deliver("d-1")
+    assert json.loads(sent["content"]) == jsonable_encoder(item(_event()))
+
+
+def test_row多出來的欄位不會外流到body(wired, sent, fake_settings, monkeypatch):
+    """item() 是白名單。DB 多一欄（例如 caller_id、dedupe_key）
+    不該悄悄跟著推出去。"""
+    monkeypatch.setattr(dispatch.events_store, "get",
+                        lambda eid, tx=None: _event(dedupe_key="return:X:1"))
+    dispatch.deliver("d-1")
+    body = json.loads(sent["content"])
+    assert "dedupe_key" not in body and "caller_id" not in body
 
 
 def test_ping的body形狀一樣但id是0():
-    body = dispatch.ping_payload()
-    assert list(body) == list(dispatch.event_payload(_event()))
+    from app.event_view import item
+
+    body = item(dispatch.ping_row())
+    assert list(body) == list(item(_event()))
     assert body["id"] == 0 and body["event_type"] == "ping"
 
 
