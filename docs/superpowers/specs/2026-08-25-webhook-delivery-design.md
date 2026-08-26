@@ -280,8 +280,20 @@ sweep 重排過的 delivery 會拿到一個**全新的** task，它的
 
 固定 key / `t` / body → 固定 hex，寫進 README，讓 caller 拿去驗自己的實作。
 
-⚠️ **向量由 `payment-paypal` 產生，`payment-ecpay` 逐字複製。**
+⚠️ **向量只有一組，先實作的那個服務產生，另一個逐字複製。**
 各自產生一組「應該相同」的向量，等於沒有向量。
+
+實際上 `payment-ecpay` 先實作，所以向量在 `tests/test_webhook_signing.py`
+與 `README.md` 裡，`payment-paypal` 照抄：
+
+```
+WEBHOOK_SIGNING_KEY = "test-signing-key"
+caller_id           = "line-translate-bot"
+secret              = a6b1f5b99eceb78d8161ce309c2aaa884331bfae5d0f0b438458795953a38a4c
+t                   = 1756090455
+body                = {"id":1234,"event_type":"payment.return"}
+v1                  = 5b1967f64135c6dff853b169effe4421cf9a1e0dff72125008c789f3d4bd2b39
+```
 
 ---
 

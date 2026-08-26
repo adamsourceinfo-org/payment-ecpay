@@ -42,6 +42,15 @@ class Settings:
     public_base_url: Optional[str]
     db_pool_max: int
     db_pool_timeout_seconds: float
+    # 事件推送。**兩把機密缺席時不啟動失敗，而是關閉推送** ——
+    # 第一次部署時 secret 還沒建，硬性必填會讓服務起不來，
+    # 而沒有推送的服務仍然是完全可用的服務（GET /v1/events 還在）。
+    webhook_signing_key: Optional[str]
+    internal_key: Optional[str]
+    webhook_timeout_seconds: float
+    webhook_enqueue_timeout_seconds: float
+    tasks_queue_prefix: str
+    tasks_location: str
     log_level: str
     db_instance: Optional[str]
     db_user: Optional[str]
@@ -80,6 +89,11 @@ class Settings:
         所以不依環境擋 —— 擋了反而讓退款這條路在 dev 永遠測不到。
         """
         return f"{self.ecpay_host}/CreditDetail/DoAction"
+
+    @property
+    def push_configured(self) -> bool:
+        """兩把都要有才推得動：一把用來簽給 caller，一把用來認自己的內部端點。"""
+        return bool(self.webhook_signing_key and self.internal_key)
 
     @property
     def db_configured(self) -> bool:
@@ -145,6 +159,19 @@ def load_settings() -> Settings:
         # 不做成無限等：見 app/db.py 的 PoolExhausted。
         db_pool_timeout_seconds=float(
             os.environ.get("DB_POOL_TIMEOUT_SECONDS", "5")),
+        webhook_signing_key=os.environ.get("WEBHOOK_SIGNING_KEY") or None,
+        internal_key=os.environ.get("INTERNAL_KEY") or None,
+        webhook_timeout_seconds=float(
+            os.environ.get("WEBHOOK_TIMEOUT_SECONDS", "10")),
+        # 建 task 是一次對外 HTTP，而它就在回綠界 1|OK 的路徑上。
+        # Cloud Tasks API 一慢，ACK 就慢，綠界超時就重送 —— 事故當下再加一輪流量。
+        # 所以給它一個短 timeout，逾時就交給 sweep 補。
+        webhook_enqueue_timeout_seconds=float(
+            os.environ.get("WEBHOOK_ENQUEUE_TIMEOUT_SECONDS", "2")),
+        # per-caller queue 是 {prefix}-{消毒後的 caller}；prefix 本身是退路用的共用 queue。
+        tasks_queue_prefix=os.environ.get(
+            "TASKS_QUEUE_PREFIX", "payment-ecpay-deliveries"),
+        tasks_location=os.environ.get("TASKS_LOCATION", "asia-east1"),
         log_level=os.environ.get("LOG_LEVEL", "info"),
         # 這三個由 CI 依部署目標推導注入，寫進 .cicd/env.* 會被 verify 擋下
         db_instance=os.environ.get("INSTANCE_CONNECTION_NAME") or None,

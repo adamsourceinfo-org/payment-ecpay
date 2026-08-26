@@ -53,9 +53,18 @@ token 存在 `orders.checkout_token`，一次性付款成立後失效。
 **dev 的 HashKey/HashIV 照樣走 Secret Manager**，即使它公開在綠界文件上。
 目的是讓兩個環境的載入路徑一模一樣，不要等 prod 上線才第一次執行到讀 secret 的程式碼。
 
-**服務不主動推送事件。** caller 用 `GET /v1/events?after=` 游標拉。
-可靠送達是一整套子系統（重試、退避、死信、對方端點的可用性），caller 越多負擔越重。
-`events` 表就是將來要做推送時的來源。
+**~~服務不主動推送事件。~~**
+**2026-08-25 推翻，見 [`2026-08-25-webhook-delivery-design.md`](2026-08-25-webhook-delivery-design.md)。**
+
+原本的理由是：可靠送達是一整套子系統（重試、退避、死信、對方端點的可用性），
+caller 越多負擔越重，而拉取的成本落在 caller 自己身上。
+
+推翻它的是兩件當時沒想到的事：**caller 也 scale to zero**（所以「成本落在
+caller 身上」不成立 —— 每月續期扣款進來時沒有任何人在拉），以及**那一整套
+子系統現在租得到**（Cloud Tasks）。
+
+原決策的最後一句話仍然成立，而且正是新設計的起點：
+`events` 表就是推送的來源，而 `GET /v1/events` 一個位元組都沒改。
 
 ### 明確不做的
 

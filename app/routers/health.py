@@ -2,8 +2,31 @@ from fastapi import APIRouter, Response
 
 from app import db
 from app.config import get_settings
+from app.store import deliveries as deliveries_store
+from app.store import webhook_endpoints as endpoints_store
 
 router = APIRouter(tags=["health"])
+
+
+def _push_status() -> dict:
+    """推送有沒有設定、有沒有積壓的死信。
+
+    ⚠️ **dead > 0 不讓 /health 回 503。** 503 的意思是「這個服務壞了」，
+    而積壓的死信通常代表**caller** 壞了。用 503 表達會讓 ci 的 smoke 因為
+    別人的故障而紅燈 —— 那個檢查就從「我們部署成功了嗎」變成
+    「所有 caller 今天都好嗎」，而後者不是它的工作。報告它，不要用它決定成敗。
+    """
+    s = get_settings()
+    if not s.push_configured:
+        return {"configured": False}
+    out = {"configured": True, "queue_prefix": s.tasks_queue_prefix,
+           "location": s.tasks_location}
+    try:
+        out["endpoints_active"] = endpoints_store.count_active()
+        out["dead_last_24h"] = deliveries_store.dead_count(24)
+    except Exception as exc:                    # noqa: BLE001 — 診斷用
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
 
 
 # 路徑刻意不是 /healthz —— Google Frontend 在 *.run.app 上會攔截 /healthz
@@ -42,6 +65,7 @@ def health(response: Response):
             # 綠界文件說測試環境沒有退款 API，實測是錯的 —— 兩邊都能用。
             "refund_api": "available",
         },
+        "push": _push_status(),
     }
 
     if db_info.get("ok") is not True:

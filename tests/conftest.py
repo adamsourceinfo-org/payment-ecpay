@@ -30,6 +30,14 @@ class FakeSettings:
     public_base_url = None
     db_pool_max = 3
     db_pool_timeout_seconds = 5.0
+    # 推送：測試預設是「已設定」，要測降級的測試自己覆寫成 None
+    webhook_signing_key = "test-signing-key"
+    internal_key = "test-internal-key"
+    webhook_timeout_seconds = 10.0
+    webhook_enqueue_timeout_seconds = 2.0
+    tasks_queue_prefix = "payment-ecpay-deliveries"
+    tasks_location = "asia-east1"
+    push_configured = True
     log_level = "debug"
     db_instance = "proj:region:inst"
     db_user = "run-runtime@proj.iam"

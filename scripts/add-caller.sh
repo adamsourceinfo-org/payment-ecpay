@@ -64,9 +64,39 @@ VALUES ('${CALLER_ID}', '${KEY_HASH}', ${SCOPES_SQL}, $(
   if [[ -n "$NOTE" ]]; then echo "'${NOTE}'"; else echo "NULL"; fi));
 SQL
 
+# ⚠️ 一個 caller 一個 Cloud Tasks queue —— 這是推送的公平性隔離。
+# max-concurrent-dispatches 是**每個 queue** 的設定，共用一個 queue 的話，
+# 一個 caller 的端點 timeout 10 秒就能佔滿全部派送槽位，排隊擋住其他所有 caller。
+# 行銷活動當天，那等於「A 公司的活動把 B 公司的通知全排隊了」。
+#
+# queue 名字**向服務要**，不要在這裡自己抄一份消毒規則 ——
+# 抄一份的話，某天改了規則就會建出一個服務永遠找不到的 queue，
+# 而症狀是「靜靜地退回共用 queue」，沒有人會發現。
+QUEUE_PREFIX="$(grep -E '^TASKS_QUEUE_PREFIX=' "$(dirname "$0")/../.cicd/env.common" | cut -d= -f2)"
+QUEUE_LOCATION="$(grep -E '^TASKS_LOCATION=' "$(dirname "$0")/../.cicd/env.common" | cut -d= -f2)"
+QUEUE="$(cd "$(dirname "$0")/.." && python3 -c "
+import sys
+from app.webhooks.tasks import build_queue_name
+print(build_queue_name(sys.argv[1], sys.argv[2]))
+" "$QUEUE_PREFIX" "$CALLER_ID")"
+
+# 主要旋鈕是 max-retry-duration，不是 max-attempts —— 後者只是失控保險。
+# 12 小時內實際會派送約 23 次，永遠碰不到 30。
+if gcloud tasks queues describe "$QUEUE" --location="$QUEUE_LOCATION" \
+     --project="$PROJECT" >/dev/null 2>&1; then
+  echo "  queue ${QUEUE} 已存在，略過"
+else
+  gcloud tasks queues create "$QUEUE" --location="$QUEUE_LOCATION" \
+    --project="$PROJECT" \
+    --max-retry-duration=12h --max-attempts=30 \
+    --min-backoff=10s --max-backoff=1h --max-doublings=5 \
+    --max-concurrent-dispatches=10
+fi
+
 cat <<MSG
 
   caller : ${CALLER_ID}
+  queue  : ${QUEUE}
   環境   : ${ENVIRONMENT}
   scopes : ${SCOPES}
   建立者 : ${DB_USER}

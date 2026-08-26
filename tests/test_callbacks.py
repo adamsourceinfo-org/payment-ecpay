@@ -22,6 +22,8 @@ class FakeStore:
         self.attempts = {}
         self.calls = []
         self.transactions = 0
+        self.scheduled = []          # dispatch.schedule 的呼叫
+        self.ensured = []            # dispatch.ensure 的呼叫
 
     # --- events
     def record(self, dedupe_key, event_type, caller_id, kind, subject_id, raw,
@@ -43,6 +45,12 @@ def store(monkeypatch):
         _fs.transactions += 1
         yield object()
     monkeypatch.setattr(callbacks.db, "transaction", _fake_tx)
+
+    # 推送的排程：這裡只記錄「有沒有被呼叫」。真正的投遞另外測。
+    monkeypatch.setattr(callbacks.dispatch, "schedule",
+                        lambda eid, cid, base, _fs=fs: _fs.scheduled.append((eid, cid)))
+    monkeypatch.setattr(callbacks.dispatch, "ensure",
+                        lambda key, base, _fs=fs: _fs.ensured.append(key))
 
     monkeypatch.setattr(callbacks.events_store, "record", fs.record)
 
@@ -372,13 +380,13 @@ def test_回呼的處理跑在threadpool而不是事件迴圈(client, store, mon
     seen = {}
     orig = callbacks._payment_return
 
-    def spy(raw):
+    def spy(raw, base):
         try:
             asyncio.get_running_loop()
             seen["on_event_loop"] = True
         except RuntimeError:
             seen["on_event_loop"] = False
-        return orig(raw)
+        return orig(raw, base)
 
     monkeypatch.setattr(callbacks, "_payment_return", spy)
     store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
@@ -396,3 +404,45 @@ def test_連線池耗盡回503而不是卡住(client, store, monkeypatch):
     r = client.post("/ecpay/return", data=_order_return())
     assert r.status_code == 503
     assert r.json()["error"] == "overloaded"
+
+
+def test_落地新事件就排一次推送(client, store):
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
+    client.post("/ecpay/return", data=_order_return())
+    assert store.scheduled == [(1, "c1")]
+    assert store.ensured == []
+
+
+def test_綠界重送不排推送但要確保投遞列存在(client, store):
+    """⚠️ record() 回 None 有**兩個**意思：綠界重送，或者這一筆已經被
+    /ecpay/order-result 那條路處理掉了。第二種情況下沒有人排過推送 ——
+    照舊早退會靜默退化成 sweep 的一小時延遲，而且正好發生在活動期間。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
+    body = _order_return()
+    client.post("/ecpay/return", data=body)
+    store.scheduled.clear()
+    client.post("/ecpay/return", data=body)
+    assert store.scheduled == []
+    assert store.ensured == ["return:O123:1"]
+
+
+def test_導回先到時_幕後回呼仍然補上推送(client, store):
+    """這是上面那條規則存在的實際場景：order-result 贏了競態，
+    狀態已經對了，但推送還沒有人排。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    body = _order_return()
+    client.post("/ecpay/order-result", data=body, follow_redirects=False)
+    assert store.scheduled == [] and store.ensured == []   # 導回不排推送
+
+    client.post("/ecpay/return", data=body)
+    assert store.ensured == ["return:O123:1"]              # 幕後補上
+
+
+def test_導回不排推送(client, store):
+    """導回路徑要快，而幕後回呼一定會到。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    client.post("/ecpay/order-result", data=_order_return(),
+                follow_redirects=False)
+    assert store.scheduled == [] and store.ensured == []

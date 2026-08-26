@@ -14,8 +14,14 @@ def list_events(after: int = Query(default=0, ge=0),
                 caller: Caller = Depends(require("events:read"))):
     """游標式增量拉取。caller 記住最後一筆的 id 當下次的 after。
 
-    服務**不主動推送** —— 可靠送達是一整套子系統，caller 越多負擔越重。
     傳 after=0 從頭拉，這也是對帳的路徑。
+
+    **這是兩條出口之一。** 另一條是主動推送（見 app/webhooks/），
+    而推送的 body 就是底下 items[] 的一個元素、逐欄相同 ——
+    caller 因此只要寫一份 parser。改這裡的形狀時，
+    app/webhooks/dispatch.py 的 event_payload() 要一起改。
+
+    ⚠️ 即使接了推送，這支端點仍然是安全網：有界的重試不等於保證送達。
     """
     rows = store.list_after(caller.caller_id, after, limit)
     return {

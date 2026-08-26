@@ -49,6 +49,8 @@ from app.store import attempts as attempts_store
 from app.store import events as events_store
 from app.store import orders as orders_store
 from app.store import subscriptions as subs_store
+from app.urls import base_url
+from app.webhooks import dispatch
 
 log = logging.getLogger("callback")
 
@@ -259,10 +261,10 @@ async def payment_return(request: Request):
     首期與一次性付款的欄位完全相同 —— 靠 MerchantTradeNo 查自己的表分辨。
     """
     raw = await request.body()
-    return await run_in_threadpool(_payment_return, raw)
+    return await run_in_threadpool(_payment_return, raw, base_url(request))
 
 
-def _payment_return(raw: bytes):
+def _payment_return(raw: bytes, base: str):
     params = _parse(raw)
     if not _verified(params):
         log.warning("return 驗簽失敗 MerchantTradeNo=%s",
@@ -271,7 +273,16 @@ def _payment_return(raw: bytes):
 
     trade_no = params.get("MerchantTradeNo", "")
     rtn_code = str(params.get("RtnCode", ""))
-    _apply_return(params, trade_no, rtn_code)
+    new_id, caller_id = _apply_return(params, trade_no, rtn_code)
+
+    # 排程是交易 commit 之後、回 1|OK 之前的最後一件事。
+    if new_id is None:
+        # ⚠️ 不能只是早退。None 有兩個意思 —— 綠界重送，或者這一筆已經被
+        # /ecpay/order-result 那條路處理掉了。第二種情況下沒有人排過推送，
+        # 照舊早退會靜默退化成 sweep 的一小時延遲。
+        dispatch.ensure(return_dedupe_key(trade_no, rtn_code), base)
+    else:
+        dispatch.schedule(new_id, caller_id, base)
     return PlainTextResponse(ACK)
 
 
@@ -282,10 +293,10 @@ async def period_return(request: Request):
     去重鍵用 gwsr（綠界每次授權的交易號）—— 這是唯一每期都不同的識別碼。
     """
     raw = await request.body()
-    return await run_in_threadpool(_period_return, raw)
+    return await run_in_threadpool(_period_return, raw, base_url(request))
 
 
-def _period_return(raw: bytes):
+def _period_return(raw: bytes, base: str):
     params = _parse(raw)
     if not _verified(params):
         return PlainTextResponse("0|CheckMacValue verify failed", status_code=400)
@@ -294,6 +305,7 @@ def _period_return(raw: bytes):
     gwsr = str(params.get("gwsr") or "")
     rtn_code = str(params.get("RtnCode", ""))
     raw_json = json.dumps(params, ensure_ascii=False)
+    dedupe = f"period:{gwsr or trade_no}:{rtn_code}"
 
     with db.transaction() as tx:
         sub, _ = _resolve(trade_no, tx=tx)
@@ -301,7 +313,7 @@ def _period_return(raw: bytes):
         subject_id = str(sub["id"]) if sub else None
 
         new_id = events_store.record(
-            f"period:{gwsr or trade_no}:{rtn_code}", "subscription.charge",
+            dedupe, "subscription.charge",
             caller_id, "subscription" if sub else None, subject_id, raw_json,
             tx=tx)
 
@@ -320,6 +332,10 @@ def _period_return(raw: bytes):
             # 扣款失敗**不改訂閱狀態** —— 綠界會繼續嘗試，
             # 連續六期失敗它才自動終止。單次失敗不等於訂閱結束。
 
+    if new_id is None:
+        dispatch.ensure(dedupe, base)
+    else:
+        dispatch.schedule(new_id, caller_id, base)
     return PlainTextResponse(ACK)
 
 
@@ -331,16 +347,17 @@ async def payment_info(request: Request):
     訂單進入 awaiting_payment，使用者可能幾天後才去繳。
     """
     raw = await request.body()
-    return await run_in_threadpool(_payment_info, raw)
+    return await run_in_threadpool(_payment_info, raw, base_url(request))
 
 
-def _payment_info(raw: bytes):
+def _payment_info(raw: bytes, base: str):
     params = _parse(raw)
     if not _verified(params):
         return PlainTextResponse("0|CheckMacValue verify failed", status_code=400)
 
     trade_no = params.get("MerchantTradeNo", "")
     raw_json = json.dumps(params, ensure_ascii=False)
+    dedupe = f"info:{trade_no}"
 
     with db.transaction() as tx:
         _, order = _resolve(trade_no, tx=tx)
@@ -348,7 +365,7 @@ def _payment_info(raw: bytes):
         subject_id = str(order["id"]) if order else None
 
         new_id = events_store.record(
-            f"info:{trade_no}", "payment.info", caller_id,
+            dedupe, "payment.info", caller_id,
             "order" if order else None, subject_id, raw_json, tx=tx)
 
         if new_id is not None and order:
@@ -358,6 +375,10 @@ def _payment_info(raw: bytes):
                 orders_store.set_status(order["id"], "awaiting_payment",
                                         params.get("TradeNo"), tx=tx)
 
+    if new_id is None:
+        dispatch.ensure(dedupe, base)
+    else:
+        dispatch.schedule(new_id, caller_id, base)
     return PlainTextResponse(ACK)
 
 

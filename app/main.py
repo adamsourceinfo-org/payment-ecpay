@@ -18,7 +18,11 @@ class _RedactFilter(logging.Filter):
 
     def filter(self, record):
         s = get_settings()
-        secrets = [v for v in (s.hash_key, s.hash_iv) if v]
+        # 推送另外帶進兩把：INTERNAL_KEY 與 WEBHOOK_SIGNING_KEY。
+        # ⚠️ 逐 caller **推導**出來的簽章密鑰不在這個名單裡（那是無界集合，
+        # 遮不完）。所以規則是：app/routers/webhooks.py 的回應 body 永遠不進 log。
+        secrets = [v for v in (s.hash_key, s.hash_iv,
+                               s.internal_key, s.webhook_signing_key) if v]
         try:
             msg = record.getMessage()
         except Exception:                       # noqa: BLE001
@@ -66,12 +70,15 @@ def _pool_exhausted(request, exc):
 
 
 def _mount():
-    from app.routers import (callbacks, events, health, orders, subscriptions)
+    from app.routers import (callbacks, events, health, internal, orders,
+                             subscriptions, webhooks)
     app.include_router(health.router)
     app.include_router(orders.router)
     app.include_router(subscriptions.router)
     app.include_router(events.router)
+    app.include_router(webhooks.router)
     app.include_router(callbacks.router)
+    app.include_router(internal.router)
 
 
 _mount()
