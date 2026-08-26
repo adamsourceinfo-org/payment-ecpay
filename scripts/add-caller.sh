@@ -82,14 +82,16 @@ print(build_queue_name(sys.argv[1], sys.argv[2]))
 
 # 主要旋鈕是 max-retry-duration，不是 max-attempts —— 後者只是失控保險。
 # 12 小時內實際會派送約 23 次，永遠碰不到 30。
+# ⚠️ 時長只收**秒**：43200s 不能寫成 12h，API 會回
+#    「Illegal duration format; duration must end with 's'」。
 if gcloud tasks queues describe "$QUEUE" --location="$QUEUE_LOCATION" \
      --project="$PROJECT" >/dev/null 2>&1; then
   echo "  queue ${QUEUE} 已存在，略過"
 else
   gcloud tasks queues create "$QUEUE" --location="$QUEUE_LOCATION" \
     --project="$PROJECT" \
-    --max-retry-duration=12h --max-attempts=30 \
-    --min-backoff=10s --max-backoff=1h --max-doublings=5 \
+    --max-retry-duration=43200s --max-attempts=30 \
+    --min-backoff=10s --max-backoff=3600s --max-doublings=5 \
     --max-concurrent-dispatches=10
 fi
 

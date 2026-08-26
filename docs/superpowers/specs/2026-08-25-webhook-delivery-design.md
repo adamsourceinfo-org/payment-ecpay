@@ -391,11 +391,14 @@ runbook 固定、不隨 caller 增加，但隔離不完美 —— 同 shard 的 
 每個 queue（共用的與 per-caller 的）都用同一組參數：
 
 ```bash
+# ⚠️ 時長只收**秒**（結尾 s）。寫 --max-retry-duration=12h 會被拒：
+#    Illegal duration format; duration must end with 's'
+#    這是 Cloud Tasks API 的驗證、不是 gcloud 的，所以只有實跑才會發現。
 gcloud tasks queues create "${QUEUE}" \
   --location=asia-east1 --project=adamsourceinfo-dev \
-  --max-retry-duration=12h \
+  --max-retry-duration=43200s \
   --max-attempts=30 \
-  --min-backoff=10s --max-backoff=1h --max-doublings=5 \
+  --min-backoff=10s --max-backoff=3600s --max-doublings=5 \
   --max-concurrent-dispatches=10
 ```
 
@@ -836,10 +839,12 @@ done
 # 4. 共用的退路 queue（per-caller 的那些由 add-caller.sh 建）
 #    ⚠️ 主要旋鈕是 max-retry-duration。max-attempts 只是失控保險。
 #    12 小時內實際會派送約 23 次，永遠碰不到 30。
+# ⚠️ 43200s 不能寫成 12h、3600s 不能寫成 1h —— API 只收秒，會直接回
+#    「Illegal duration format; duration must end with 's'」。
 gcloud tasks queues create "${SVC}-deliveries" --location="$REGION" \
   --project="$PROJECT" \
-  --max-retry-duration=12h --max-attempts=30 \
-  --min-backoff=10s --max-backoff=1h --max-doublings=5 \
+  --max-retry-duration=43200s --max-attempts=30 \
+  --min-backoff=10s --max-backoff=3600s --max-doublings=5 \
   --max-concurrent-dispatches=10
 
 # 5. 讓執行身分排得進 task、也讀得到 queue 設定（sweep 判死信要）
