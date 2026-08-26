@@ -1,10 +1,12 @@
 """綠界回呼。這是整個服務最需要小心的地方 ——
 驗簽、去重、以及「首期回呼分辨不出是不是訂閱」那個陷阱。"""
 import json
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import db
 from app.main import app
 from app.routers import callbacks
 from tests.conftest import sign
@@ -19,9 +21,11 @@ class FakeStore:
         self.events = {}
         self.attempts = {}
         self.calls = []
+        self.transactions = 0
 
     # --- events
-    def record(self, dedupe_key, event_type, caller_id, kind, subject_id, raw):
+    def record(self, dedupe_key, event_type, caller_id, kind, subject_id, raw,
+               tx=None):
         if dedupe_key in self.events:
             return None                     # 綠界重送
         self.events[dedupe_key] = (event_type, caller_id, kind, subject_id)
@@ -31,21 +35,30 @@ class FakeStore:
 @pytest.fixture
 def store(monkeypatch):
     fs = FakeStore()
+
+    # 回呼現在把「落地事件 + 更新狀態」包成一個交易。這裡不需要真的連 DB，
+    # 但 transaction() 一定要被呼叫到 —— 不然測的就不是實際跑的那條路。
+    @contextmanager
+    def _fake_tx(_fs=fs):
+        _fs.transactions += 1
+        yield object()
+    monkeypatch.setattr(callbacks.db, "transaction", _fake_tx)
+
     monkeypatch.setattr(callbacks.events_store, "record", fs.record)
 
     # trade_attempts：單號 → (kind, id)。回呼一律先走這裡，
     # 因為訂單可能換過單號（綠界的單號送出過就不能再用）。
     monkeypatch.setattr(callbacks.attempts_store, "record",
-                        lambda tn, kind, sid, _fs=fs: _fs.attempts.update(
+                        lambda tn, kind, sid, _fs=fs, **k: _fs.attempts.update(
                             {tn: (kind, str(sid))}))
 
-    def _resolve(tn, _fs=fs):
+    def _resolve(tn, _fs=fs, **k):
         hit = _fs.attempts.get(tn)
         return {"subject_kind": hit[0], "subject_id": hit[1]} if hit else None
     monkeypatch.setattr(callbacks.attempts_store, "resolve", _resolve)
 
     def _by_id(store_dict):
-        def inner(sid, _d=store_dict):
+        def inner(sid, _d=store_dict, **k):
             return next((v for v in _d.values() if str(v["id"]) == str(sid)), None)
         return inner
     monkeypatch.setattr(callbacks.orders_store, "get_by_id", _by_id(fs.orders))
@@ -53,9 +66,9 @@ def store(monkeypatch):
 
     for name in ("get_by_trade_no",):
         monkeypatch.setattr(callbacks.orders_store, name,
-                            lambda tn, _fs=fs: _fs.orders.get(tn))
+                            lambda tn, _fs=fs, **k: _fs.orders.get(tn))
         monkeypatch.setattr(callbacks.subs_store, name,
-                            lambda tn, _fs=fs: _fs.subs.get(tn))
+                            lambda tn, _fs=fs, **k: _fs.subs.get(tn))
     for mod, label in ((callbacks.orders_store, "order"),
                        (callbacks.subs_store, "sub")):
         for fn in ("mark_paid", "set_status", "mark_active", "record_charge",
@@ -210,16 +223,74 @@ def test_payment_info_lands_and_sets_awaiting(client, store):
     assert ("order", "set_status") in done
 
 
-def test_order_result_does_not_change_state(client, store):
-    """瀏覽器導回可以被偽造、也可能根本不發生（使用者關掉分頁）。
-    狀態的真相來源只有幕後的 ReturnURL。"""
-    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1",
+def _paid_marks(store):
+    return [c for c in store.calls if c[1] == "mark_paid"]
+
+
+def test_order_result_驗簽通過就是第二個入口(client, store):
+    """OrderResultURL 與 ReturnURL 的參數集相同、用同一把 HashKey/HashIV 簽 ——
+    驗簽通過的導回**一樣可信**。拿它更早把狀態弄對，
+    把「錢確定」到「我們的狀態正確」的窗口縮到零。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
                             "return_url": "https://caller.example/done"}
     r = client.post("/ecpay/order-result", data=_order_return(),
                     follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"].startswith("https://caller.example/done?")
-    assert store.calls == []                # 一個狀態都沒改
+    assert len(_paid_marks(store)) == 1
+
+
+def test_order_result_驗簽不過就不改狀態(client, store):
+    """驗不過的導回就是使用者可以偽造的那種，只導回、不採信。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    bad = _order_return()
+    bad["TradeAmt"] = "1"
+    r = client.post("/ecpay/order-result", data=bad, follow_redirects=False)
+    assert r.status_code == 303
+    assert "verified=0" in r.headers["location"]
+    assert store.calls == []
+
+
+def test_order_result_沒帶檢查碼就不改狀態(client, store):
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    client.post("/ecpay/order-result",
+                data={"MerchantTradeNo": "O123", "RtnCode": "1"},
+                follow_redirects=False)
+    assert store.calls == []
+
+
+def test_order_result_取號導回不會憑空多一筆return事件(client, store):
+    """ATM／超商取號也會導回這裡（RtnCode=2）。那筆的事件是
+    /ecpay/payment-info 的 `info:` 鍵 —— 不擋的話會多出一筆 payment.return。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    client.post("/ecpay/order-result", data=_order_return(rtn="2"),
+                follow_redirects=False)
+    assert store.events == {}
+    assert store.calls == []
+
+
+def test_兩個入口只更新一次狀態(client, store):
+    """誰先到誰生效，靠同一個 dedupe_key。後到的那個拿到 None。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created",
+                            "return_url": "https://caller.example/done"}
+    body = _order_return()
+    client.post("/ecpay/order-result", data=body, follow_redirects=False)
+    ack = client.post("/ecpay/return", data=body)
+
+    assert ack.text == "1|OK"               # 後到的還是要回 1|OK
+    assert len(_paid_marks(store)) == 1     # 但狀態只改一次
+    assert len(store.events) == 1
+
+
+def test_回呼把事件與狀態包在同一個交易裡(client, store):
+    """分成兩個 commit 的話，中間掛掉就再也救不回來 ——
+    綠界的重送會被 dedupe_key 擋掉，而那正是唯一的復原路徑。"""
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
+    client.post("/ecpay/return", data=_order_return())
+    assert store.transactions == 1
 
 
 def test_callback_for_an_old_trade_no_still_finds_the_order(client, store):
@@ -290,3 +361,38 @@ def test_used_checkout_link_says_already_paid(client, store, monkeypatch):
 
     r = client.get("/ecpay/checkout/never-existed")
     assert r.status_code == 404 and "無效" in r.text
+
+
+def test_回呼的處理跑在threadpool而不是事件迴圈(client, store, monkeypatch):
+    """pg8000 是同步 driver。同步呼叫寫在 async def 裡會卡住整個事件迴圈 ——
+    那個實例上所有請求跟著排隊，包括 caller 正在查的 GET /v1/orders/{id}。
+    一筆回呼六次 DB round trip 就是幾十毫秒的全實例停擺。"""
+    import asyncio
+
+    seen = {}
+    orig = callbacks._payment_return
+
+    def spy(raw):
+        try:
+            asyncio.get_running_loop()
+            seen["on_event_loop"] = True
+        except RuntimeError:
+            seen["on_event_loop"] = False
+        return orig(raw)
+
+    monkeypatch.setattr(callbacks, "_payment_return", spy)
+    store.orders["O123"] = {"id": "oid-1", "caller_id": "c1", "status": "created"}
+    client.post("/ecpay/return", data=_order_return())
+    assert seen == {"on_event_loop": False}
+
+
+def test_連線池耗盡回503而不是卡住(client, store, monkeypatch):
+    """回 503 讓綠界重送（它本來就會）。無限等會讓症狀從「慢」
+    變成「整個實例沒反應」，那時候連哪裡壞了都答不出來。"""
+    def boom(*a, **k):
+        raise db.PoolExhausted("連線池已滿（3/3）且等待逾時")
+
+    monkeypatch.setattr(callbacks, "_apply_return", boom)
+    r = client.post("/ecpay/return", data=_order_return())
+    assert r.status_code == 503
+    assert r.json()["error"] == "overloaded"

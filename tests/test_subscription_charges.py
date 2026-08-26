@@ -13,7 +13,7 @@ class FakeDB:
         self.placeholder = placeholder
         self.calls = []
 
-    def query(self, sql, args=(), fetch="all"):
+    def query(self, sql, args=(), fetch="all", tx=None):
         self.calls.append(sql.split()[0] + " " + ("UPDATE" if "UPDATE" in sql else "INSERT"))
         if "UPDATE subscription_charges" in sql:
             return {"id": 1} if self.placeholder else None

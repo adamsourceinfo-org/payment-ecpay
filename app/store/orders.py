@@ -14,10 +14,10 @@ def get(caller_id: str, order_id: str):
                     (caller_id, order_id), fetch="one")
 
 
-def get_by_trade_no(merchant_trade_no: str):
+def get_by_trade_no(merchant_trade_no: str, tx=None):
     """回呼用：這時還不知道是哪個 caller，由這筆資料告訴我們。"""
     return db.query("SELECT * FROM orders WHERE merchant_trade_no = %s",
-                    (merchant_trade_no,), fetch="one")
+                    (merchant_trade_no,), fetch="one", tx=tx)
 
 
 def get_by_checkout_token(token: str):
@@ -40,7 +40,7 @@ def create(*, caller_id, reference_id, merchant_trade_no, amount,
 
 
 def mark_paid(order_id, ecpay_trade_no: str, payment_type: str,
-              gwsr: str = None, auth_code: str = None):
+              gwsr: str = None, auth_code: str = None, tx=None):
     """gwsr 是信用卡授權單號，auth_code 是授權碼 —— 兩個都只有信用卡會有。
     退款、查授權明細、跟綠界客服對帳都要靠它們，所以收到就存。"""
     return db.query(
@@ -51,15 +51,15 @@ def mark_paid(order_id, ecpay_trade_no: str, payment_type: str,
         " checkout_token = NULL,"            # 付完就讓導轉頁失效
         " updated_at = now() WHERE id = %s RETURNING *",
         (ecpay_trade_no, payment_type, gwsr or None, auth_code or None,
-         order_id), fetch="one")
+         order_id), fetch="one", tx=tx)
 
 
-def set_status(order_id, status: str, ecpay_trade_no: str = None):
+def set_status(order_id, status: str, ecpay_trade_no: str = None, tx=None):
     return db.query(
         "UPDATE orders SET status = %s,"
         " ecpay_trade_no = COALESCE(%s, ecpay_trade_no),"
         " updated_at = now() WHERE id = %s RETURNING *",
-        (status, ecpay_trade_no, order_id), fetch="one")
+        (status, ecpay_trade_no, order_id), fetch="one", tx=tx)
 
 
 def add_refund(order_id, amount: int, fully: bool):
@@ -76,7 +76,7 @@ def set_closed(order_id, closed: bool):
         " WHERE id = %s RETURNING *", (closed, order_id), fetch="one")
 
 
-def save_payment_info(order_id, info: dict, raw_json: str):
+def save_payment_info(order_id, info: dict, raw_json: str, tx=None):
     db.query(
         "INSERT INTO order_payment_info (order_id, bank_code, v_account,"
         " payment_no, expire_date, raw) VALUES (%s,%s,%s,%s,%s,%s::jsonb)"
@@ -84,7 +84,8 @@ def save_payment_info(order_id, info: dict, raw_json: str):
         " v_account = EXCLUDED.v_account, payment_no = EXCLUDED.payment_no,"
         " expire_date = EXCLUDED.expire_date, raw = EXCLUDED.raw",
         (order_id, info.get("BankCode"), info.get("vAccount"),
-         info.get("PaymentNo"), info.get("ExpireDate"), raw_json), fetch="none")
+         info.get("PaymentNo"), info.get("ExpireDate"), raw_json),
+        fetch="none", tx=tx)
 
 
 def payment_info(order_id):
@@ -118,10 +119,11 @@ def rotate_trade_no(order_id, merchant_trade_no: str, fields_json: str):
         (merchant_trade_no, fields_json, order_id), fetch="one")
 
 
-def get_by_id(order_id):
+def get_by_id(order_id, tx=None):
     """不帶 caller_id —— 只給回呼路徑用（那時還不知道是誰的）。
     caller 端的查詢一律走 get()，那支強制帶 caller_id。"""
-    return db.query("SELECT * FROM orders WHERE id = %s", (order_id,), fetch="one")
+    return db.query("SELECT * FROM orders WHERE id = %s", (order_id,),
+                    fetch="one", tx=tx)
 
 
 def get_by_used_token(token):

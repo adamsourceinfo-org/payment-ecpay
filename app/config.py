@@ -41,6 +41,7 @@ class Settings:
     timeout_seconds: float
     public_base_url: Optional[str]
     db_pool_max: int
+    db_pool_timeout_seconds: float
     log_level: str
     db_instance: Optional[str]
     db_user: Optional[str]
@@ -140,6 +141,10 @@ def load_settings() -> Settings:
         # 「還沒有網址就填不了回呼網址」的雞生蛋。
         public_base_url=(os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/") or None,
         db_pool_max=int(os.environ.get("DB_POOL_MAX", "3")),
+        # 借不到連線就等這麼久，然後 PoolExhausted → 503。
+        # 不做成無限等：見 app/db.py 的 PoolExhausted。
+        db_pool_timeout_seconds=float(
+            os.environ.get("DB_POOL_TIMEOUT_SECONDS", "5")),
         log_level=os.environ.get("LOG_LEVEL", "info"),
         # 這三個由 CI 依部署目標推導注入，寫進 .cicd/env.* 會被 verify 擋下
         db_instance=os.environ.get("INSTANCE_CONNECTION_NAME") or None,

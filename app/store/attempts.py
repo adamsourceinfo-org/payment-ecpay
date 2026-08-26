@@ -14,8 +14,9 @@ def record(merchant_trade_no: str, subject_kind: str, subject_id) -> None:
         (merchant_trade_no, subject_kind, subject_id), fetch="none")
 
 
-def resolve(merchant_trade_no: str):
+def resolve(merchant_trade_no: str, tx=None):
     """回 {"subject_kind", "subject_id"} 或 None。"""
     return db.query(
         "SELECT subject_kind, subject_id FROM trade_attempts"
-        " WHERE merchant_trade_no = %s", (merchant_trade_no,), fetch="one")
+        " WHERE merchant_trade_no = %s", (merchant_trade_no,), fetch="one",
+        tx=tx)

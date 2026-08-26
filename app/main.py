@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app import db
 from app.config import get_settings
@@ -47,6 +48,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="payment-ecpay", version="1", lifespan=lifespan)
+
+
+@app.exception_handler(db.PoolExhausted)
+def _pool_exhausted(request, exc):
+    """連線池滿了就誠實回 503，不要無限等。
+
+    無限等會讓 threadpool 的 worker 全部卡住，症狀從「慢」變成
+    「整個實例沒反應」，健康檢查也跟著死 —— 那時候連哪裡壞了都答不出來。
+    503 讓綠界重送（它本來就會）、讓 caller 重試，至少故障說得出口。
+    """
+    log.error("連線池耗盡：%s", exc)
+    return JSONResponse(
+        {"error": "overloaded",
+         "message": "database connections exhausted, retry shortly"},
+        status_code=503)
 
 
 def _mount():

@@ -13,12 +13,12 @@ def get(caller_id, sub_id):
         (caller_id, sub_id), fetch="one")
 
 
-def get_by_trade_no(merchant_trade_no):
+def get_by_trade_no(merchant_trade_no, tx=None):
     """回呼用。**這是分辨訂閱首期與一次性付款的唯一方法** ——
     綠界首期回呼的欄位跟一次性付款一模一樣。"""
     return db.query(
         "SELECT * FROM subscriptions WHERE merchant_trade_no = %s",
-        (merchant_trade_no,), fetch="one")
+        (merchant_trade_no,), fetch="one", tx=tx)
 
 
 def get_by_checkout_token(token):
@@ -39,7 +39,7 @@ def create(*, caller_id, reference_id, merchant_trade_no, period_amount,
          checkout_fields_json), fetch="one")
 
 
-def mark_active(sub_id, ecpay_trade_no):
+def mark_active(sub_id, ecpay_trade_no, tx=None):
     """首期授權成功。綠界的規則是首期失敗整張單就不進排程，
     所以首期成功等於訂閱真的開始了。"""
     return db.query(
@@ -48,22 +48,25 @@ def mark_active(sub_id, ecpay_trade_no):
         " first_charged_at = COALESCE(first_charged_at, now()),"
         " used_checkout_token = COALESCE(checkout_token, used_checkout_token),"
         " checkout_token = NULL, updated_at = now()"
-        " WHERE id = %s RETURNING *", (ecpay_trade_no, sub_id), fetch="one")
+        " WHERE id = %s RETURNING *", (ecpay_trade_no, sub_id), fetch="one",
+        tx=tx)
 
 
-def set_status(sub_id, status, cancelled=False):
+def set_status(sub_id, status, cancelled=False, tx=None):
     return db.query(
         "UPDATE subscriptions SET status = %s, updated_at = now(),"
         " cancelled_at = CASE WHEN %s THEN COALESCE(cancelled_at, now())"
         "                     ELSE cancelled_at END"
-        " WHERE id = %s RETURNING *", (status, cancelled, sub_id), fetch="one")
+        " WHERE id = %s RETURNING *", (status, cancelled, sub_id), fetch="one",
+        tx=tx)
 
 
-def set_totals(sub_id, times: int, amount: int):
+def set_totals(sub_id, times: int, amount: int, tx=None):
     return db.query(
         "UPDATE subscriptions SET total_success_times = %s,"
         " total_success_amount = %s, updated_at = now()"
-        " WHERE id = %s RETURNING *", (times, amount, sub_id), fetch="one")
+        " WHERE id = %s RETURNING *", (times, amount, sub_id), fetch="one",
+        tx=tx)
 
 
 def set_exec_status(sub_id, exec_status: str):
@@ -73,7 +76,8 @@ def set_exec_status(sub_id, exec_status: str):
         " WHERE id = %s RETURNING *", (exec_status, sub_id), fetch="one")
 
 
-def record_charge(sub_id, *, gwsr, amount, rtn_code, auth_code, process_date):
+def record_charge(sub_id, *, gwsr, amount, rtn_code, auth_code, process_date,
+                  tx=None):
     """回新的扣款 id；綠界重送造成的重複回 None。gwsr 是天然的去重鍵。
 
     **首期是特例**：綠界首期回呼**不帶 gwsr**（實測確認），只能先塞
@@ -89,14 +93,15 @@ def record_charge(sub_id, *, gwsr, amount, rtn_code, auth_code, process_date):
             "   AND amount = %s AND process_date IS NOT DISTINCT FROM %s"
             " RETURNING id",
             (str(gwsr), auth_code, rtn_code, sub_id, amount, process_date),
-            fetch="one")
+            fetch="one", tx=tx)
         if upgraded:
             return upgraded["id"]
     row = db.query(
         "INSERT INTO subscription_charges (subscription_id, gwsr, amount,"
         " rtn_code, auth_code, process_date) VALUES (%s,%s,%s,%s,%s,%s)"
         " ON CONFLICT (gwsr) DO NOTHING RETURNING id",
-        (sub_id, gwsr, amount, rtn_code, auth_code, process_date), fetch="one")
+        (sub_id, gwsr, amount, rtn_code, auth_code, process_date),
+        fetch="one", tx=tx)
     return row["id"] if row else None
 
 
@@ -132,10 +137,10 @@ def rotate_trade_no(sub_id, merchant_trade_no: str, fields_json: str):
         (merchant_trade_no, fields_json, sub_id), fetch="one")
 
 
-def get_by_id(sub_id):
+def get_by_id(sub_id, tx=None):
     """不帶 caller_id —— 只給回呼路徑用。"""
     return db.query("SELECT * FROM subscriptions WHERE id = %s", (sub_id,),
-                    fetch="one")
+                    fetch="one", tx=tx)
 
 
 def get_by_used_token(token):

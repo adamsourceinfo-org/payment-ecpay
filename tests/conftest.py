@@ -29,6 +29,7 @@ class FakeSettings:
     timeout_seconds = 5.0
     public_base_url = None
     db_pool_max = 3
+    db_pool_timeout_seconds = 5.0
     log_level = "debug"
     db_instance = "proj:region:inst"
     db_user = "run-runtime@proj.iam"
