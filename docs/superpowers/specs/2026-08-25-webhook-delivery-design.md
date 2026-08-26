@@ -608,6 +608,9 @@ CREATE TABLE IF NOT EXISTS deliveries (
   endpoint_id     uuid NOT NULL REFERENCES webhook_endpoints(id),
   caller_id       text NOT NULL,
   -- 排程當下的網址。caller 之後改了網址，「這筆當初送去哪」還答得出來。
+  -- ⚠️ 代價（dev 實測確認）：換網址**不會**讓已經排進佇列的投遞改道，
+  -- 它們會繼續打舊網址直到重試用完。要立刻改道只能 redeliver。
+  -- 這一條要寫進 README —— 不寫的話 caller 會以為改完就生效了。
   url             text NOT NULL,
   -- pending  已建列、task 已排、還沒有任何投遞結果
   -- delivered caller 回了 2xx
