@@ -22,9 +22,7 @@ caller 上線本來就是人工步驟，多一行 gcloud 就換到完全隔離�
 而且 runtime SA 不需要 `cloudtasks.admin`。對一個 allow_unauthenticated
 的服務來說，不給那個權限是值得的。
 """
-import hashlib
 import logging
-import re
 import threading
 import urllib.request
 
@@ -32,6 +30,7 @@ import httpx
 
 from app import db
 from app.config import get_settings
+from app.webhooks.naming import build_queue_name
 
 log = logging.getLogger("webhooks.tasks")
 
@@ -59,22 +58,6 @@ def project_id() -> str:
         with urllib.request.urlopen(req, timeout=5) as resp:
             _project_cache = resp.read().decode().strip()
         return _project_cache
-
-
-def build_queue_name(prefix: str, caller_id: str) -> str:
-    """`{prefix}-{消毒後的 caller}-{sha256 前 8 碼}`。
-
-    Cloud Tasks 的 queue id 只收 `[A-Za-z0-9-]`、上限 100 字元。
-    ⚠️ 尾巴那 8 碼雜湊不是裝飾：消毒會把 `a.b` 與 `a-b` 變成同一個字串，
-    沒有雜湊的話兩個不同的 caller 會共用一個 queue —— 隔離就白做了。
-
-    ⚠️ **`scripts/add-caller.sh` 建 queue 時呼叫的就是這個函式**（見那支腳本），
-    不是自己抄一份規則。抄一份的話，某天改了消毒規則就會建出一個
-    服務永遠找不到的 queue —— 而症狀是「靜靜地退回共用 queue」。
-    """
-    slug = re.sub(r"[^A-Za-z0-9-]", "-", caller_id)[:40].strip("-") or "caller"
-    digest = hashlib.sha256(caller_id.encode()).hexdigest()[:8]
-    return f"{prefix}-{slug}-{digest}"
 
 
 def queue_name(caller_id: str) -> str:

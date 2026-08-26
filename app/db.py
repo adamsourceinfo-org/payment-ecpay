@@ -24,6 +24,7 @@ from pathlib import Path
 from queue import Empty, LifoQueue
 
 import pg8000.dbapi
+from pg8000.exceptions import InterfaceError
 
 from app.config import get_settings
 
@@ -96,15 +97,30 @@ def _get_pool() -> LifoQueue:
     return _pool
 
 
-def _acquire():
-    """借一條連線：池裡有就用，沒有且未達上限就建，達上限就等。"""
+def _stale(exc: BaseException) -> bool:
+    """這條連線是不是死了（而不是「這個查詢有問題」）。
+
+    ⚠️ Cloud SQL 會關掉閒置太久的連線，而池是 LIFO ——
+    低流量時最底下那幾條可以躺很久。借到那種連線的第一個請求會拿到
+    `InterfaceError: network error`，而它跟「SQL 寫錯」是完全不同的事：
+    前者換一條線重試就好，後者重試幾次都一樣。
+
+    這是實跑 dev 才看到的：連著打四個請求，只有**第一個**回 500。
+    原本的 get_conn() 會丟棄壞連線，所以後面三個都正常 ——
+    但那個倒楣的 caller 已經吃到 500 了。
+    """
+    return isinstance(exc, (InterfaceError, OSError, ConnectionError))
+
+
+def _acquire_ex():
+    """回 (conn, 是不是從池裡借的)。從池裡借的才值得重試。"""
     global _open
     s = get_settings()
     pool = _get_pool()
     deadline = time.monotonic() + s.db_pool_timeout_seconds
     while True:
         try:
-            return pool.get_nowait()
+            return pool.get_nowait(), True
         except Empty:
             pass
         with _open_cv:
@@ -118,7 +134,7 @@ def _acquire():
             # 被喚醒後回到迴圈重試 —— 池裡那條可能已經被別人搶走了
             _open_cv.wait(remaining)
     try:
-        return _new_conn()
+        return _new_conn(), False
     except Exception:
         # ⚠️ 名額一定要還。漏掉的話池會慢慢「漏」到永久耗盡，
         # 而症狀是「跑一陣子之後開始逾時」—— 最難查的那一種。
@@ -126,6 +142,10 @@ def _acquire():
             _open -= 1
             _open_cv.notify()
         raise
+
+
+def _acquire():
+    return _acquire_ex()[0]
 
 
 def _release(conn, discard: bool = False) -> None:
@@ -214,11 +234,36 @@ def transaction():
 
 
 def query(sql: str, args=(), fetch: str = "all", tx: Tx = None):
-    """給了 tx 就用那條連線、不自己 commit；沒給就維持原本的行為。"""
+    """給了 tx 就用那條連線、不自己 commit；沒給就維持原本的行為。
+
+    ⚠️ **從池裡借到的死連線會換一條重試一次。**
+    Cloud SQL 會關掉閒置太久的連線，而低流量時池底那幾條躺得最久 ——
+    不重試的話，每次服務閒置一陣子之後的第一個請求就吃一個 500。
+
+    只重試「池裡借來的」：新建的連線失敗代表 DB 真的連不上，重試只是把
+    延遲加倍。也只重試單句查詢 —— `transaction()` 裡的是呼叫端的程式碼，
+    這一層沒有立場替呼叫端重放它。
+    """
     if tx is not None:
         return tx.query(sql, args, fetch)
-    with get_conn() as conn:
-        return _exec(conn, sql, args, fetch)
+    for is_last in (False, True):
+        conn, from_pool = _acquire_ex()
+        try:
+            out = _exec(conn, sql, args, fetch)
+            conn.commit()
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:                 # noqa: BLE001
+                pass
+            _release(conn, discard=True)
+            if not is_last and from_pool and _stale(exc):
+                log.info("池裡的連線已失效（%s），換一條重試", type(exc).__name__)
+                continue
+            raise
+        else:
+            _release(conn)
+            return out
 
 
 def run_migrations(migrations_dir: str = "migrations") -> list:

@@ -201,3 +201,90 @@ def test_拿不到advisory_lock就跳過不阻塞(conns, fake_settings, monkeypa
     sqls = " ".join(sql for sql, _ in conns[0].executed)
     assert "pg_try_advisory_lock" in sqls
     assert "pg_advisory_unlock" not in sqls   # 沒拿到就不該解鎖
+
+
+def test_池裡的死連線會換一條重試一次(conns, fake_settings, monkeypatch):
+    """⚠️ 這是實跑 dev 才看到的：連著打四個請求，只有**第一個**回 500。
+
+    Cloud SQL 會關掉閒置太久的連線，而池是 LIFO —— 低流量時池底那幾條
+    躺得最久。原本 get_conn() 會丟棄壞連線，所以後面三個請求都正常，
+    但那個倒楣的 caller 已經吃到 500 了。
+    """
+    from pg8000.exceptions import InterfaceError
+
+    fake_settings.db_pool_max = 3
+
+    # 先讓池裡有一條連線
+    c = db._acquire()
+    db._release(c)
+
+    calls = []
+    real_execute = FakeCursor.execute
+
+    def flaky(self, sql, args=()):
+        calls.append(self.conn)
+        if len(calls) == 1:
+            raise InterfaceError("network error")     # 池裡那條已經死了
+        real_execute(self, sql, args)
+
+    monkeypatch.setattr(FakeCursor, "execute", flaky)
+
+    db.query("SELECT 1")                    # 不該拋
+    assert len(calls) == 2                  # 重試了一次
+    assert calls[0] is not calls[1]         # 而且是換了一條線
+    assert calls[0].closed                  # 死的那條被丟棄
+
+
+def test_只重試一次_不會無限重試(conns, fake_settings, monkeypatch):
+    from pg8000.exceptions import InterfaceError
+
+    fake_settings.db_pool_max = 3
+    c = db._acquire()
+    db._release(c)
+
+    calls = []
+
+    def always_dead(self, sql, args=()):
+        calls.append(1)
+        raise InterfaceError("network error")
+
+    monkeypatch.setattr(FakeCursor, "execute", always_dead)
+    with pytest.raises(InterfaceError):
+        db.query("SELECT 1")
+    assert len(calls) == 2                  # 原本那次 + 重試一次，就這樣
+
+
+def test_SQL錯誤不重試(conns, fake_settings, monkeypatch):
+    """「這個查詢有問題」跟「這條線死了」是兩件事 —— 重試前者只是浪費。"""
+    fake_settings.db_pool_max = 3
+    c = db._acquire()
+    db._release(c)
+
+    calls = []
+
+    def bad_sql(self, sql, args=()):
+        calls.append(1)
+        raise ValueError("syntax error")
+
+    monkeypatch.setattr(FakeCursor, "execute", bad_sql)
+    with pytest.raises(ValueError):
+        db.query("SELECT bogus")
+    assert len(calls) == 1
+
+
+def test_新建的連線失敗不重試(conns, fake_settings, monkeypatch):
+    """池是空的 → 這條是新建的 → 失敗代表 DB 真的連不上，
+    重試只是把延遲加倍。"""
+    from pg8000.exceptions import InterfaceError
+
+    fake_settings.db_pool_max = 3
+    calls = []
+
+    def dead(self, sql, args=()):
+        calls.append(1)
+        raise InterfaceError("network error")
+
+    monkeypatch.setattr(FakeCursor, "execute", dead)
+    with pytest.raises(InterfaceError):
+        db.query("SELECT 1")
+    assert len(calls) == 1
