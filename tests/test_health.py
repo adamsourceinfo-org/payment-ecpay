@@ -68,3 +68,43 @@ def test_credit_check_code_value_never_appears_in_health(client, monkeypatch,
     monkeypatch.setattr(db, "db_status", _ok)
     fake_settings.credit_check_code = "97361824"
     assert "97361824" not in client.get("/health").text
+
+
+def test_可選機密的尾端換行要被吃掉(monkeypatch):
+    """⚠️ 這是實跑 dev 才抓到的。Secret Manager 存的是位元組，而最自然的
+    建立方式（`python3 -c 'print(...)' | gcloud secrets create`）會把換行
+    也存進去。Cloud Run 原樣注入，於是 INTERNAL_KEY 變成 "abc\\n"，
+    內部端點永遠回 401 —— 比對的另一邊是 shell 展開時 trim 過的。
+
+    _required() 本來就 strip，所以 hash_key/hash_iv 一直沒事。
+    可選的那幾個必須跟上，否則同一個 repo 裡兩種行為。
+    """
+    import app.config as cfg
+
+    for name in ("ECPAY_ENV", "ECPAY_MERCHANT_ID", "ECPAY_HASH_KEY",
+                 "ECPAY_HASH_IV"):
+        monkeypatch.setenv(name, {"ECPAY_ENV": "stage"}.get(name, "x"))
+    monkeypatch.setenv("INTERNAL_KEY", "abc123\n")
+    monkeypatch.setenv("WEBHOOK_SIGNING_KEY", "  sk-xyz\n")
+    monkeypatch.setenv("ECPAY_CREDIT_CHECK_CODE", "cc999\n")
+
+    s = cfg.load_settings()
+    assert s.internal_key == "abc123"
+    assert s.webhook_signing_key == "sk-xyz"
+    assert s.credit_check_code == "cc999"
+
+
+def test_可選機密缺席時是None(monkeypatch):
+    import app.config as cfg
+
+    monkeypatch.setenv("ECPAY_ENV", "stage")
+    monkeypatch.setenv("ECPAY_MERCHANT_ID", "x")
+    monkeypatch.setenv("ECPAY_HASH_KEY", "x")
+    monkeypatch.setenv("ECPAY_HASH_IV", "x")
+    for name in ("INTERNAL_KEY", "WEBHOOK_SIGNING_KEY",
+                 "ECPAY_CREDIT_CHECK_CODE"):
+        monkeypatch.setenv(name, "   ")      # 只有空白也算缺席
+    s = cfg.load_settings()
+    assert s.internal_key is None and s.webhook_signing_key is None
+    assert s.credit_check_code is None
+    assert s.push_configured is False       # 推送跟著關閉，不是半開

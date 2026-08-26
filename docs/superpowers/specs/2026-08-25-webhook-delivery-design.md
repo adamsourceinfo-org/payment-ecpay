@@ -819,10 +819,15 @@ gcloud services enable cloudtasks.googleapis.com cloudscheduler.googleapis.com \
   --project="$PROJECT"
 
 # 2. 兩把機密
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))' | \
+#    ⚠️ **不要用 `print()`** —— 它會把換行也存進 secret，而 Cloud Run 是原樣注入的。
+#    症狀：INTERNAL_KEY 變成 "abc\n"，內部端點永遠回 401（比對的另一邊是
+#    shell 展開時 trim 過的）。app/config.py 的 _optional() 已經會 strip，
+#    但建的時候就別放進去 —— 這樣 `gcloud secrets versions access` 直接
+#    複製貼上也不會有隱形字元。
+python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' | \
   gcloud secrets create "${SVC}-webhook-signing-key-${ENV}" \
     --replication-policy=automatic --data-file=- --project="$PROJECT"
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))' | \
+python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' | \
   gcloud secrets create "${SVC}-internal-key-${ENV}" \
     --replication-policy=automatic --data-file=- --project="$PROJECT"
 

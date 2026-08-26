@@ -107,6 +107,24 @@ def _required(name: str) -> str:
     return v
 
 
+def _optional(name: str):
+    """可以缺席的機密。**一定要 strip。**
+
+    ⚠️ Secret Manager 存的是位元組，而最自然的建立方式
+    （`python3 -c 'print(...)' | gcloud secrets create --data-file=-`）
+    會把**換行也存進去**。Cloud Run 原樣注入，於是值變成 "abc\n"。
+
+    症狀依用途而異，而且都很難查：
+    - `INTERNAL_KEY` → 內部端點永遠回 401（比對的另一邊是 trim 過的）
+    - `WEBHOOK_SIGNING_KEY` → 簽章能算但與別人算的不同
+    - `ECPAY_CREDIT_CHECK_CODE` → CheckMacValue 對不上，綠界只說驗證失敗
+
+    `_required()` 本來就 strip，所以 hash_key/hash_iv 一直沒事 ——
+    這幾個可選的必須跟上，否則同一個 repo 裡兩種行為。
+    """
+    return (os.environ.get(name) or "").strip() or None
+
+
 def load_settings() -> Settings:
     ecpay_env = _required("ECPAY_ENV")
     if ecpay_env not in ECPAY_HOSTS:
@@ -147,7 +165,7 @@ def load_settings() -> Settings:
         # 那個是半公開的）。兩個都走 Secret Manager。
         hash_key=_required("ECPAY_HASH_KEY"),
         hash_iv=_required("ECPAY_HASH_IV"),
-        credit_check_code=os.environ.get("ECPAY_CREDIT_CHECK_CODE") or None,
+        credit_check_code=_optional("ECPAY_CREDIT_CHECK_CODE"),
         allowed_payments=payments,
         min_amounts=mins,
         timeout_seconds=float(os.environ.get("ECPAY_TIMEOUT_SECONDS", "10")),
@@ -159,8 +177,8 @@ def load_settings() -> Settings:
         # 不做成無限等：見 app/db.py 的 PoolExhausted。
         db_pool_timeout_seconds=float(
             os.environ.get("DB_POOL_TIMEOUT_SECONDS", "5")),
-        webhook_signing_key=os.environ.get("WEBHOOK_SIGNING_KEY") or None,
-        internal_key=os.environ.get("INTERNAL_KEY") or None,
+        webhook_signing_key=_optional("WEBHOOK_SIGNING_KEY"),
+        internal_key=_optional("INTERNAL_KEY"),
         webhook_timeout_seconds=float(
             os.environ.get("WEBHOOK_TIMEOUT_SECONDS", "10")),
         # 建 task 是一次對外 HTTP，而它就在回綠界 1|OK 的路徑上。
