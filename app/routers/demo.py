@@ -29,8 +29,12 @@
   看不到別的 caller 的任何資料。
 - demo caller 的資料跟真 caller 一樣受 caller_id 隔離 —— 走的是同一套 store。
 """
+import hmac
+import json
 import logging
+import secrets
 import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -47,6 +51,7 @@ from app.store import events as events_store
 from app.store import orders as orders_store
 from app.store import subscriptions as subs_store
 from app.urls import base_url
+from app.webhooks import signing
 
 log = logging.getLogger("demo")
 
@@ -87,8 +92,10 @@ def checkout(body: dict, request: Request):
     """
     caller = _caller()
     kind = body.get("kind")
-    # 每次都用新的 reference_id —— 不然第二次點下去會撞到冪等而回同一筆
-    ref = f"demo-{kind}-{int(time.time() * 1000)}"
+    # 每次都要是**新的** reference_id —— 撞到冪等的話回的是前一筆的
+    # checkout_url，而那個 token 已經用掉了，使用者會看到「這筆已經完成付款」。
+    # ⚠️ 只用毫秒不夠：連點兩下可以落在同一毫秒（測試就抓到了）。
+    ref = f"demo-{kind}-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
     base = base_url(request)
     ret = f"{base}/demo"
 
@@ -184,3 +191,106 @@ def feed(after: int = Query(default=0, ge=0)):
             for d in dels
         ],
     }
+
+
+# =====================================================================
+# 示範用的**接收端** —— 這一段是 caller 那一側，不是我們這一側
+# =====================================================================
+#
+# 沒有這支的話，示範只演到「我們送出去了、對方回 200」，而那是
+# deliveries 表的視角。付款流程裡真正要驗的是**對方收到什麼、驗簽過不過** ——
+# 那一半才是 caller 要寫的程式碼。
+#
+# 所以這支刻意寫成 caller 可以照抄的樣子：驗簽、防重放、去重、回 2xx。
+# 它跑在我們的行程裡只是因為方便，邏輯上它屬於 caller。
+
+_INBOX = deque(maxlen=20)
+
+# ⚠️ 記在記憶體裡，不進資料庫。理由：這是 dev 的示範，
+# 為它開一張表會連 prod 都跟著多一張空表。代價要說清楚 ——
+# 實例被回收或同時有多個實例時，這個清單會空掉或看起來少一筆。
+# 「那筆到底送出去沒有」的權威答案永遠是 deliveries，不是這裡。
+
+
+@router.post("/hook")
+async def demo_hook(request: Request):
+    """示範 caller 的接收端。**這段程式碼就是 caller 要寫的東西。**"""
+    caller = _caller()
+    raw = await request.body()          # ⚠️ 原始 bytes，不要先 parse 再重組
+    header = request.headers.get("x-signature", "")
+
+    # 1) 解析 t 與 v1。不要用 split("=", 1) 之外的偷懶寫法 ——
+    #    值裡真的出現 "=" 時會被切壞。
+    parts = {}
+    for kv in header.split(","):
+        k, sep, v = kv.partition("=")
+        if sep:
+            parts[k.strip()] = v.strip()
+
+    now = int(time.time())
+    ok, why = False, ""
+    try:
+        t = int(parts.get("t", ""))
+    except ValueError:
+        why = "標頭裡沒有可解析的 t"
+        t = None
+
+    if t is not None:
+        # 2) 防重放：時間戳超出容忍就拒，不要只看簽章對不對
+        if abs(now - t) > signing.TOLERANCE_SECONDS:
+            why = f"時間戳超出容忍（{abs(now - t)} 秒）"
+        else:
+            secret = signing.secret_for(caller.caller_id)
+            expected = signing.signature(secret, t, raw)
+            # 3) constant-time 比較
+            ok = hmac.compare_digest(expected, parts.get("v1", ""))
+            why = "" if ok else "簽章不符"
+
+    body = {}
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except Exception:                   # noqa: BLE001 — 驗不過的東西本來就可能不是 JSON
+        pass
+
+    event_id = body.get("id")
+    event_type = body.get("event_type")
+
+    # 4) ping 要在去重**之前**就處理掉 —— 它的 id 固定是 0，
+    #    照順序去重的話第二次 ping 會被自己擋掉，看起來像沒送到。
+    is_ping = event_type == "ping"
+    dup = False
+    if ok and not is_ping:
+        # 5) 用驗過簽的 body 裡的 id 去重（**不是** X-Event-Id，那個沒驗過）
+        dup = any(r["event_id"] == event_id and r["ok"] and not r["duplicate"]
+                  for r in _INBOX)
+
+    _INBOX.appendleft({
+        "at": now,
+        "ok": ok,
+        "why": why,
+        "duplicate": dup,
+        "ping": is_ping,
+        "event_id": event_id,
+        "event_type": event_type,
+        "rtn_code": (body.get("payload") or {}).get("RtnCode"),
+        "attempt": request.headers.get("x-delivery-attempt"),
+        "delivery_id": request.headers.get("x-delivery-id"),
+        "bytes": len(raw),
+    })
+
+    if not ok:
+        # 驗不過就當作沒收到。回 400 讓它重試沒有意義（重試也一樣驗不過），
+        # 但回 2xx 等於默默吞掉 —— 所以回 400 並在自己的 log 留痕。
+        log.warning("demo 接收端驗簽失敗：%s", why)
+        raise HTTPException(status_code=400, detail=why or "驗簽失敗")
+
+    # 6) 處理成功才回 2xx。這裡失敗的話應該回 500 讓我們重送 ——
+    #    純拉取沒有這個機制，推送把那個安全網還給 caller。
+    return {"received": event_id, "duplicate": dup}
+
+
+@router.get("/api/inbox")
+def inbox():
+    """caller 那一側收到了什麼。見 _INBOX 上面那段關於「記在記憶體裡」的代價。"""
+    _caller()
+    return {"items": list(_INBOX)}

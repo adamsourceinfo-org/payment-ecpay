@@ -288,16 +288,27 @@ body {
     </div>
 
     <div class="opsblock">
-      <h3>投遞 <em>推送到 caller 的端點</em></h3>
+      <h3>投遞 <em>我們這端：送出去了沒有</em></h3>
       <div class="opscard"><div class="feed" id="deliveries"><div class="empty">—</div></div></div>
+    </div>
+
+    <div class="opsblock">
+      <h3>caller 收到的 <em>對方那端：驗簽過不過</em></h3>
+      <div class="opscard"><div class="feed" id="inbox"><div class="empty">—</div></div></div>
     </div>
 
     <button class="reset" type="button" id="reset">清掉這次的交易紀錄</button>
 
     <p class="note">
-      <b>兩條出口送的是同一筆。</b>事件是 caller 主動拉的，投遞是我們主動推的 ——
-      body 逐欄相同，所以 caller 只寫一份 parser。
-      沒註冊推送端點的話「投遞」會一直是空的，而事件照樣看得到。
+      <b>三層是三個不同的視角。</b>「事件」是 caller 主動拉的、「投遞」是我們這端
+      的送出紀錄、「caller 收到的」是<b>對方真的收到什麼</b>並且驗簽的結果 ——
+      前兩層綠燈但第三層紅的，就是簽章或接收端的問題。
+    </p>
+    <p class="note" style="border:0;padding-top:0;margin-top:10px">
+      ⚠️ 「caller 收到的」記在記憶體裡，實例被回收就空了。
+      <b>「那筆到底送出去沒有」的權威答案永遠是「投遞」那一層。</b>
+      接收端的程式碼在 <code>app/routers/demo.py</code> 的 <code>demo_hook()</code> ——
+      那段就是 caller 要寫的東西。
     </p>
   </aside>
 </div>
@@ -431,6 +442,10 @@ body {
       const r = await fetch(`/demo/api/feed?after=${cursor}`);
       if (r.ok) renderFeed(await r.json());
     } catch (_) { /* 同上 */ }
+    try {
+      const r = await fetch("/demo/api/inbox");
+      if (r.ok) renderInbox((await r.json()).items || []);
+    } catch (_) { /* 同上 */ }
 
     polls++;
     $("poll-state").textContent = polls > 60 ? "已停止輪詢" : "每 2 秒更新";
@@ -503,6 +518,22 @@ body {
         <span>${pill(x.status)} <span class="id">試 ${esc(x.attempts)} 次</span></span>
         <span class="id">${x.last_status === null ? "—" : esc(x.last_status)}</span>
       </div>`).join("") : '<div class="empty">沒有註冊推送端點，或還沒有事件</div>';
+  }
+
+  function renderInbox(items) {
+    $("inbox").innerHTML = items.length ? items.map(x => {
+      const label = x.ping ? "ping"
+                  : x.duplicate ? `#${esc(x.event_id)} 重複（已去重）`
+                  : `#${esc(x.event_id)} ${esc(x.event_type)}`;
+      const verdict = x.ok
+        ? `<span class="pill paid">驗簽通過</span>`
+        : `<span class="pill failed">${esc(x.why || "驗簽失敗")}</span>`;
+      return `<div class="row">
+          <span class="id">第 ${esc(x.attempt || 1)} 次</span>
+          <span>${verdict} <span class="id">${label}</span></span>
+          <span class="id">${esc(x.bytes)} B</span>
+        </div>`;
+    }).join("") : '<div class="empty">還沒收到任何推送</div>';
   }
 
   $("reset").addEventListener("click", () => {

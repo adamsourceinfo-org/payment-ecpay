@@ -186,3 +186,104 @@ def test_沒有事件時游標不倒退(client, on, monkeypatch):
     monkeypatch.setattr(demo.deliveries_store, "list_for_caller",
                         lambda cid, limit=10: [])
     assert client.get("/demo/api/feed?after=42").json()["next_cursor"] == 42
+
+
+# --- 示範接收端（caller 那一側）---------------------------------------
+
+def _post_hook(client, body: bytes, *, secret, t=None, tamper=False):
+    from app.webhooks import signing
+    import time as _t
+    t = int(_t.time()) if t is None else t
+    sig = signing.header(secret, t, body)
+    if tamper:
+        sig = sig[:-1] + ("0" if sig[-1] != "0" else "1")
+    return client.post("/demo/hook", content=body,
+                       headers={"X-Signature": sig,
+                                "Content-Type": "application/json",
+                                "X-Delivery-Attempt": "1"})
+
+
+@pytest.fixture
+def secret(on):
+    from app.webhooks import signing
+    demo._INBOX.clear()
+    return signing.secret_for("demo-storefront")
+
+
+def _event_body(eid=1234, etype="payment.return"):
+    import json as _j
+    return _j.dumps({"id": eid, "event_type": etype, "subject_kind": "order",
+                     "subject_id": "o-1", "payload": {"RtnCode": "1"},
+                     "received_at": None},
+                    ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def test_接收端驗簽通過就回2xx並記進收件匣(client, secret):
+    r = _post_hook(client, _event_body(), secret=secret)
+    assert r.status_code == 200 and r.json()["received"] == 1234
+    got = client.get("/demo/api/inbox").json()["items"][0]
+    assert got["ok"] is True and got["event_type"] == "payment.return"
+
+
+def test_簽章被改一個字就不收(client, secret):
+    r = _post_hook(client, _event_body(), secret=secret, tamper=True)
+    assert r.status_code == 400
+    assert client.get("/demo/api/inbox").json()["items"][0]["ok"] is False
+
+
+def test_時間戳太舊就拒_不是只看簽章對不對(client, secret):
+    """防重放。簽章正確但時間戳超出容忍一樣要拒 ——
+    不然一份側錄下來的推送可以無限期重播。"""
+    import time as _t
+    r = _post_hook(client, _event_body(), secret=secret,
+                   t=int(_t.time()) - 400)
+    assert r.status_code == 400
+    assert "時間戳" in client.get("/demo/api/inbox").json()["items"][0]["why"]
+
+
+def test_原始bytes_中文payload重新序列化就驗不過(client, secret):
+    """這是整個介接最容易錯的一條：Express 預設會先 parse 掉 JSON，
+    而重新 stringify 出來的字串跟原文不保證逐位元組相同 ——
+    **只在有中文的 payload 上才發作**，而綠界的 RtnMsg 就是中文。"""
+    import json as _j
+    original = _j.dumps({"id": 1, "event_type": "payment.return",
+                         "payload": {"RtnMsg": "付款成功"}},
+                        ensure_ascii=False, separators=(",", ":")).encode()
+    # 用原文簽，卻送「ASCII 跳脫過」的版本 —— 模擬接收端重新序列化
+    reserialized = _j.dumps(_j.loads(original), ensure_ascii=True,
+                            separators=(",", ":")).encode()
+    assert reserialized != original
+
+    from app.webhooks import signing
+    import time as _t
+    t = int(_t.time())
+    r = client.post("/demo/hook", content=reserialized, headers={
+        "X-Signature": f"t={t},v1={signing.signature(secret, t, original)}",
+        "Content-Type": "application/json"})
+    assert r.status_code == 400
+
+
+def test_用body裡的id去重_不是用header(client, secret):
+    """X-Event-Id 沒經過驗簽，拿它當去重鍵等於讓別人決定你收不收。"""
+    body = _event_body(eid=555)
+    assert _post_hook(client, body, secret=secret).json()["duplicate"] is False
+    assert _post_hook(client, body, secret=secret).json()["duplicate"] is True
+
+
+def test_ping在去重之前就處理掉(client, secret):
+    """ping 的 id 固定是 0。照順序去重的話第二次會被自己擋掉，
+    看起來像沒送到 —— 所以要先短路。"""
+    import json as _j
+    ping = _j.dumps({"id": 0, "event_type": "ping", "subject_kind": None,
+                     "subject_id": None, "payload": {}, "received_at": None},
+                    separators=(",", ":")).encode()
+    for _ in range(2):
+        r = _post_hook(client, ping, secret=secret)
+        assert r.status_code == 200 and r.json()["duplicate"] is False
+    assert all(x["ping"] for x in client.get("/demo/api/inbox").json()["items"])
+
+
+def test_收件匣沒開demo時也是404(client, fake_settings):
+    fake_settings.demo_caller_id = None
+    assert client.get("/demo/api/inbox").status_code == 404
+    assert client.post("/demo/hook", content=b"{}").status_code == 404
