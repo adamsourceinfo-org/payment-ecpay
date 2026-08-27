@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>示範商店 · payment-ecpay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;700&display=swap">
+<style>
+:root {
+  --bg:        #fbfaf7;
+  --card:      #ffffff;
+  --ops:       #f2f1ee;
+  --ops-card:  #fbfaf8;
+  --ink:       #1b1917;
+  --muted:     #6b655d;
+  --faint:     #9a938a;
+  --line:      #e4e0d9;
+  --line-soft: #eeebe5;
+  --accent:    #0e6e62;
+  --accent-ink:#ffffff;
+  --accent-soft:#e3efec;
+  --pending:   #9a6b00;
+  --pending-bg:#f9f0dc;
+  --paid:      #1f7a4c;
+  --paid-bg:   #e5f2ea;
+  --failed:    #b03a2b;
+  --failed-bg: #f9e8e5;
+  --serif: "Noto Serif TC", Georgia, "Songti TC", serif;
+  --sans:  "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
+  --mono:  "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #14130f;
+    --card:      #1c1a16;
+    --ops:       #100f0c;
+    --ops-card:  #1a1814;
+    --ink:       #ece8e0;
+    --muted:     #a49c90;
+    --faint:     #746c61;
+    --line:      #2c2924;
+    --line-soft: #24211d;
+    --accent:    #56b3a5;
+    --accent-ink:#0d1210;
+    --accent-soft:#152624;
+    --pending:   #d9a63c;
+    --pending-bg:#2a2213;
+    --paid:      #57bd85;
+    --paid-bg:   #15291e;
+    --failed:    #e0796a;
+    --failed-bg: #2c1a16;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 15px; line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.testbar {
+  background: var(--accent); color: var(--accent-ink);
+  font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em;
+  padding: 7px 20px; display: flex; flex-wrap: wrap; gap: 6px 18px;
+  align-items: center; justify-content: center; text-align: center;
+}
+.testbar b { font-weight: 500; }
+
+.shell { display: grid; min-height: calc(100vh - 34px); }
+@media (min-width: 1000px) { .shell { grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); } }
+
+/* ---------- 左：顧客看到的 ---------- */
+.shop { padding: 34px 28px 80px; max-width: 660px; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.brand h1 { font-family: var(--serif); font-weight: 700; font-size: 25px; margin: 0; letter-spacing: .01em; }
+.brand span { font-family: var(--mono); font-size: 11.5px; color: var(--faint); letter-spacing: .08em; }
+.shop > p.intro { color: var(--muted); margin: 0 0 26px; max-width: 54ch; font-size: 14.5px; }
+
+.product {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 6px; padding: 20px; margin-bottom: 16px;
+}
+.product h2 {
+  font-family: var(--serif); font-weight: 700; font-size: 19px;
+  margin: 0 0 3px;
+}
+.product .blurb { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+.price {
+  font-family: var(--mono); font-size: 26px; font-weight: 500;
+  letter-spacing: -.01em; display: flex; align-items: baseline; gap: 5px;
+}
+.price small { font-size: 13px; color: var(--muted); font-weight: 400; }
+
+.opts { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0; }
+.opt {
+  font-family: var(--mono); font-size: 12.5px;
+  border: 1px solid var(--line); background: var(--bg);
+  color: var(--ink); border-radius: 999px; padding: 5px 13px; cursor: pointer;
+}
+.opt[aria-pressed="true"] {
+  background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+}
+.opt:focus-visible, .buy:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+.buy {
+  width: 100%; font-family: var(--sans); font-size: 15px; font-weight: 700;
+  background: var(--accent); color: var(--accent-ink);
+  border: none; border-radius: 5px; padding: 12px; cursor: pointer;
+}
+.buy:hover { filter: brightness(1.08); }
+.buy[disabled] { opacity: .5; cursor: progress; }
+.hintline { font-size: 12.5px; color: var(--faint); margin: 9px 0 0; font-family: var(--mono); }
+
+/* ---------- 導回結果 ---------- */
+.result {
+  border: 1px solid var(--line); border-left: 4px solid var(--line);
+  border-radius: 6px; padding: 18px 20px; margin-bottom: 20px; background: var(--card);
+}
+.result[data-s="paid"]    { border-left-color: var(--paid);    background: var(--paid-bg); }
+.result[data-s="pending"] { border-left-color: var(--pending); background: var(--pending-bg); }
+.result[data-s="failed"]  { border-left-color: var(--failed);  background: var(--failed-bg); }
+.result h2 { font-family: var(--serif); font-size: 20px; margin: 0 0 6px; }
+.result[data-s="paid"]    h2 { color: var(--paid); }
+.result[data-s="pending"] h2 { color: var(--pending); }
+.result[data-s="failed"]  h2 { color: var(--failed); }
+.result p { margin: 0 0 8px; font-size: 14px; }
+.result p:last-child { margin-bottom: 0; }
+.result .caveat {
+  font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+  border-top: 1px solid var(--line-soft); padding-top: 10px; margin-top: 12px;
+}
+.vaccount {
+  font-family: var(--mono); font-size: 15px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px;
+  margin: 10px 0 0; display: flex; flex-direction: column; gap: 3px;
+}
+.vaccount b { font-size: 18px; letter-spacing: .04em; }
+
+/* ---------- 右：caller 的後台 ---------- */
+.ops {
+  background: var(--ops); border-left: 1px solid var(--line);
+  padding: 34px 24px 80px; font-family: var(--mono);
+}
+.ops h2 {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  margin: 0 0 4px;
+}
+.ops > p.why {
+  font-family: var(--sans); font-size: 13.5px; color: var(--muted);
+  margin: 0 0 22px; max-width: 46ch;
+}
+.opsblock { margin-bottom: 24px; }
+.opsblock > h3 {
+  font-size: 11.5px; font-weight: 500; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint);
+  margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline;
+}
+.opsblock > h3 em { font-style: normal; text-transform: none; letter-spacing: 0; }
+.opscard {
+  background: var(--ops-card); border: 1px solid var(--line);
+  border-radius: 5px; padding: 12px 14px; font-size: 12.5px;
+}
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+.kv dt { color: var(--faint); }
+.kv dd { margin: 0; word-break: break-all; }
+.kv dd.num { font-variant-numeric: tabular-nums; }
+
+.pill {
+  display: inline-block; font-size: 11.5px; padding: 1px 8px;
+  border-radius: 999px; border: 1px solid currentColor;
+}
+.pill.paid    { color: var(--paid); }
+.pill.pending { color: var(--pending); }
+.pill.failed  { color: var(--failed); }
+.pill.idle    { color: var(--faint); }
+
+.feed { display: flex; flex-direction: column; }
+.feed .row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px;
+  padding: 8px 0; border-top: 1px solid var(--line-soft); font-size: 12.5px;
+  align-items: baseline;
+}
+.feed .row:first-child { border-top: none; }
+.feed .row .id { color: var(--faint); font-variant-numeric: tabular-nums; }
+.feed .empty { color: var(--faint); font-size: 12.5px; padding: 8px 0; }
+
+.reset {
+  font-family: var(--mono); font-size: 12px; background: transparent;
+  border: 1px solid var(--line); color: var(--muted);
+  border-radius: 4px; padding: 6px 11px; cursor: pointer;
+}
+.reset:hover { border-color: var(--accent); color: var(--accent); }
+
+.note {
+  font-family: var(--sans); font-size: 13px; color: var(--muted);
+  border-top: 1px solid var(--line); padding-top: 14px; margin-top: 26px;
+  max-width: 46ch;
+}
+.note b { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="testbar">
+  <b>測試模式</b>
+  <span>綠界 stage 測試特店 3002607 · 不會有真的錢移動</span>
+  <span>測試卡 4311-9522-2222-2222 · 到期日填未來任一組 · 安全碼 222</span>
+</div>
+
+<div class="shell">
+
+  <!-- ==================== 顧客看到的 ==================== -->
+  <main class="shop">
+    <div class="brand">
+      <h1>小樹文具</h1>
+      <span>DEMO STOREFRONT</span>
+    </div>
+    <p class="intro">
+      這一頁扮演的是 <b>caller 的前端</b>。按下結帳之後走的是真的綠界收銀台、
+      真的回呼、真的推送 —— 右邊同時顯示 caller 的後台在這段期間看到了什麼。
+    </p>
+
+    <div id="result-slot"></div>
+
+    <!-- 單筆 -->
+    <section class="product">
+      <h2>手帳補充內頁</h2>
+      <p class="blurb">A5 方格 · 80 張 · 一次性購買</p>
+      <div class="price">NT$ <span id="p1-amount">100</span> <small>／含運</small></div>
+
+      <div class="opts" role="group" aria-label="付款方式">
+        <button class="opt" type="button" data-pay="Credit" aria-pressed="true">信用卡</button>
+        <button class="opt" type="button" data-pay="ATM" aria-pressed="false">ATM 轉帳</button>
+        <button class="opt" type="button" data-pay="CVS" aria-pressed="false">超商代碼</button>
+      </div>
+
+      <button class="buy" type="button" id="buy-order">結帳</button>
+      <p class="hintline" id="hint-order">信用卡：付完立刻知道結果</p>
+    </section>
+
+    <!-- 訂閱 -->
+    <section class="product">
+      <h2>每月補給包</h2>
+      <p class="blurb">每月寄一次 · 隨時可取消 · 僅限信用卡</p>
+      <div class="price">NT$ <span id="p2-amount">100</span> <small>／月</small></div>
+
+      <div class="opts" role="group" aria-label="週期">
+        <button class="opt" type="button" data-period="M" aria-pressed="true">每月</button>
+        <button class="opt" type="button" data-period="Y" aria-pressed="false">每年</button>
+      </div>
+
+      <button class="buy" type="button" id="buy-sub">開始訂閱</button>
+      <p class="hintline">首期的回呼跟一次性付款<b>逐欄相同</b> —— 分辨得出來是因為建單當下就寫進資料庫了</p>
+    </section>
+
+    <p class="note">
+      <b>這一頁不持有 API key。</b>結帳是 <code>POST /demo/api/checkout</code>，
+      建單在伺服器端用 demo caller 的身分完成 —— 跟真的 caller 的後端做同一件事。
+      真的 caller 也應該這樣做：API key 是伺服器憑證，不該出現在瀏覽器裡。
+    </p>
+  </main>
+
+  <!-- ==================== caller 的後台 ==================== -->
+  <aside class="ops">
+    <h2>caller 的後台</h2>
+    <p class="why">
+      付款者看不到這一半。這裡顯示的是同一段時間內，caller 的系統實際收到了什麼。
+    </p>
+
+    <div class="opsblock">
+      <h3>這一筆 <em id="poll-state"></em></h3>
+      <div class="opscard" id="current">
+        <span style="color:var(--faint)">還沒有進行中的交易。</span>
+      </div>
+    </div>
+
+    <div class="opsblock">
+      <h3>事件 <em>GET /v1/events（拉取）</em></h3>
+      <div class="opscard"><div class="feed" id="events"><div class="empty">—</div></div></div>
+    </div>
+
+    <div class="opsblock">
+      <h3>投遞 <em>推送到 caller 的端點</em></h3>
+      <div class="opscard"><div class="feed" id="deliveries"><div class="empty">—</div></div></div>
+    </div>
+
+    <button class="reset" type="button" id="reset">清掉這次的交易紀錄</button>
+
+    <p class="note">
+      <b>兩條出口送的是同一筆。</b>事件是 caller 主動拉的，投遞是我們主動推的 ——
+      body 逐欄相同，所以 caller 只寫一份 parser。
+      沒註冊推送端點的話「投遞」會一直是空的，而事件照樣看得到。
+    </p>
+  </aside>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const KEY = "demo-tx";
+  let cursor = 0, timer = null, polls = 0;
+
+  // ---------- 選項 ----------
+  let pay = "Credit", period = "M";
+  const HINTS = {
+    Credit: "信用卡：付完立刻知道結果",
+    ATM: "ATM：綠界只給你虛擬帳號，這時候還沒收到錢",
+    CVS: "超商代碼：同上，繳費期限前都算未付款",
+  };
+  document.querySelectorAll("[data-pay]").forEach(b => b.addEventListener("click", () => {
+    pay = b.dataset.pay;
+    document.querySelectorAll("[data-pay]").forEach(x =>
+      x.setAttribute("aria-pressed", String(x === b)));
+    $("hint-order").textContent = HINTS[pay];
+    // CVS 的最低金額比 100 高的環境會擋，先把金額拉到安全值
+    $("p1-amount").textContent = pay === "CVS" ? "100" : "100";
+  }));
+  document.querySelectorAll("[data-period]").forEach(b => b.addEventListener("click", () => {
+    period = b.dataset.period;
+    document.querySelectorAll("[data-period]").forEach(x =>
+      x.setAttribute("aria-pressed", String(x === b)));
+    $("p2-amount").textContent = "100";
+    document.querySelector("#p2-amount").closest(".price")
+      .querySelector("small").textContent = period === "M" ? "／月" : "／年";
+  }));
+
+  // ---------- 結帳 ----------
+  async function checkout(btn, payload) {
+    btn.disabled = true;
+    const was = btn.textContent;
+    btn.textContent = "建立訂單…";
+    try {
+      const r = await fetch("/demo/api/checkout", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail?.message || d.detail || "建單失敗");
+      // 導轉之後這一頁會被丟掉，所以先把「我在等哪一筆」記下來
+      sessionStorage.setItem(KEY, JSON.stringify({ kind: d.kind, id: d.id }));
+      btn.textContent = "前往綠界…";
+      location.href = d.checkout_url;
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = was;
+      showResult("failed", "建單失敗", String(e.message || e), "");
+    }
+  }
+
+  $("buy-order").addEventListener("click", (e) => checkout(e.currentTarget, {
+    kind: "order", amount: 100, item_name: "手帳補充內頁 A5 方格",
+    choose_payment: pay,
+  }));
+  $("buy-sub").addEventListener("click", (e) => checkout(e.currentTarget, {
+    kind: "subscription", amount: 100, item_name: "每月補給包",
+    period_type: period, frequency: 1,
+  }));
+
+  // ---------- 導回 ----------
+  function showResult(state, title, msg, caveat, extraHtml) {
+    $("result-slot").innerHTML = `
+      <div class="result" data-s="${state}">
+        <h2></h2><p></p>${extraHtml || ""}
+        ${caveat ? '<p class="caveat"></p>' : ""}
+      </div>`;
+    const box = $("result-slot").firstElementChild;
+    box.querySelector("h2").textContent = title;
+    box.querySelector("p").textContent = msg;
+    if (caveat) box.querySelector(".caveat").textContent = caveat;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const backTradeNo = params.get("merchant_trade_no");
+  const backRtn = params.get("rtn_code");
+  const backVerified = params.get("verified");
+
+  if (backTradeNo) {
+    const ok = backRtn === "1";
+    showResult(
+      ok ? "paid" : "pending",
+      ok ? "付款完成" : "還沒完成付款",
+      ok ? "綠界說這筆成功了。"
+         : `綠界回的代碼是 ${backRtn || "（無）"} —— 可能是取號、取消或失敗。`,
+      "⚠️ 導回帶的參數不是真相來源。它可能被偽造，也可能根本不發生（使用者關掉分頁）。"
+      + (backVerified === "1"
+          ? " 這一次 verified=1，代表檢查碼驗過了。"
+          : " 這一次 verified=0，更不能採信。")
+      + " 真相在右邊那個由幕後回呼更新的狀態。");
+    history.replaceState(null, "", location.pathname);
+  }
+
+  // ---------- 輪詢 ----------
+  function pill(status) {
+    const map = {
+      paid: "paid", active: "paid", delivered: "paid",
+      awaiting_payment: "pending", created: "pending", pending: "pending",
+      failed: "failed", dead: "failed", cancelled: "failed",
+    };
+    return `<span class="pill ${map[status] || "idle"}">${status}</span>`;
+  }
+  const esc = (s) => String(s ?? "—").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+
+  async function refresh() {
+    const saved = sessionStorage.getItem(KEY);
+    if (saved) {
+      try {
+        const { kind, id } = JSON.parse(saved);
+        const r = await fetch(`/demo/api/status?kind=${kind}&id=${id}`);
+        if (r.ok) renderCurrent(await r.json());
+      } catch (_) { /* 網路抖一下就下一輪再說 */ }
+    } else if (backTradeNo) {
+      try {
+        const r = await fetch(`/demo/api/status?trade_no=${encodeURIComponent(backTradeNo)}`);
+        if (r.ok) {
+          const d = await r.json();
+          sessionStorage.setItem(KEY, JSON.stringify({ kind: d.kind, id: d.id }));
+          renderCurrent(d);
+        }
+      } catch (_) { /* 同上 */ }
+    }
+    try {
+      const r = await fetch(`/demo/api/feed?after=${cursor}`);
+      if (r.ok) renderFeed(await r.json());
+    } catch (_) { /* 同上 */ }
+
+    polls++;
+    $("poll-state").textContent = polls > 60 ? "已停止輪詢" : "每 2 秒更新";
+    if (polls > 60) clearInterval(timer);   // 開著不管也不要一直打
+  }
+
+  function renderCurrent(d) {
+    const rows = [];
+    const push = (k, v, cls) => rows.push(
+      `<dt>${k}</dt><dd class="${cls || ""}">${v}</dd>`);
+
+    push("種類", d.kind === "order" ? "一次性訂單" : "定期定額訂閱");
+    push("狀態", pill(d.status));
+    push("我們的 id", esc(d.id));
+    push("綠界單號", esc(d.merchant_trade_no));
+    push("金額", `NT$ ${esc(d.amount)}`, "num");
+
+    if (d.kind === "order") {
+      push("付款方式", esc(d.payment_type || d.choose_payment));
+      if (d.gwsr) push("授權單號 gwsr", esc(d.gwsr));
+      if (d.payment_info) {
+        const p = d.payment_info;
+        push("繳費資訊", esc(p.bank_code ? `${p.bank_code} / ${p.v_account}` : p.payment_no));
+        push("繳費期限", esc(p.expire_date));
+      }
+    } else {
+      push("週期", `${esc(d.period_type)} × ${esc(d.frequency)}`);
+      push("已成功期數", esc(d.total_success_times), "num");
+      push("累計金額", `NT$ ${esc(d.total_success_amount)}`, "num");
+      if (d.charges && d.charges.length) {
+        push("最近一期", esc(d.charges[0].process_date || d.charges[0].gwsr));
+      }
+    }
+    $("current").innerHTML = `<dl class="kv">${rows.join("")}</dl>`;
+
+    // ATM／超商：把虛擬帳號補到左邊，這是使用者真正需要的資訊
+    if (d.kind === "order" && d.status === "awaiting_payment" && d.payment_info) {
+      const p = d.payment_info;
+      const detail = p.v_account
+        ? `<div class="vaccount"><span>銀行 ${esc(p.bank_code)}</span><b>${esc(p.v_account)}</b><span>期限 ${esc(p.expire_date)}</span></div>`
+        : `<div class="vaccount"><span>繳費代碼</span><b>${esc(p.payment_no)}</b><span>期限 ${esc(p.expire_date)}</span></div>`;
+      showResult("pending", "已取號，還沒收到錢",
+        "綠界給了繳費資訊。使用者可能幾天後才去繳 —— 在那之前這筆都不算付款成功。",
+        "這就是 payment.info 事件：它代表「拿到帳號」，不代表「收到錢」。收到錢的是 payment.return。",
+        detail);
+    } else if (d.kind === "order" && d.status === "paid") {
+      showResult("paid", "付款完成", "幕後回呼已經把狀態更新成 paid —— 這才是真相來源。",
+        "右邊的事件與投遞是同一筆，只是一條是拉的、一條是推的。");
+    } else if (d.kind === "subscription" && d.status === "active") {
+      showResult("paid", "訂閱已開通",
+        "首期授權成功。綠界的規則是首期失敗整張單不進排程，所以首期成功等於訂閱真的開始了。",
+        "取消訂閱不會退錢，也不能重新啟用 —— 只能重開一張新單。");
+    }
+  }
+
+  function renderFeed(d) {
+    cursor = d.next_cursor || cursor;
+    const ev = d.events || [];
+    $("events").innerHTML = ev.length ? ev.slice().reverse().map(e => `
+      <div class="row">
+        <span class="id">#${esc(e.id)}</span>
+        <span>${esc(e.event_type)}${e.rtn_code ? ` · RtnCode ${esc(e.rtn_code)}` : ""}</span>
+        <span class="id">${esc(e.subject_kind || "—")}</span>
+      </div>`).join("") : '<div class="empty">還沒有事件</div>';
+
+    const de = d.deliveries || [];
+    $("deliveries").innerHTML = de.length ? de.map(x => `
+      <div class="row">
+        <span class="id">${x.event_id === null ? "ping" : "#" + esc(x.event_id)}</span>
+        <span>${pill(x.status)} <span class="id">試 ${esc(x.attempts)} 次</span></span>
+        <span class="id">${x.last_status === null ? "—" : esc(x.last_status)}</span>
+      </div>`).join("") : '<div class="empty">沒有註冊推送端點，或還沒有事件</div>';
+  }
+
+  $("reset").addEventListener("click", () => {
+    sessionStorage.removeItem(KEY);
+    $("current").innerHTML = '<span style="color:var(--faint)">還沒有進行中的交易。</span>';
+    $("result-slot").innerHTML = "";
+    polls = 0;
+    if (!timer) timer = setInterval(refresh, 2000);
+  });
+
+  refresh();
+  timer = setInterval(refresh, 2000);
+})();
+</script>
+</body>
+</html>

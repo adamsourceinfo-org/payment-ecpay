@@ -70,7 +70,7 @@ def _pool_exhausted(request, exc):
 
 
 def _mount():
-    from app.routers import (callbacks, events, health, internal, orders,
+    from app.routers import (callbacks, demo, events, health, internal, orders,
                              subscriptions, webhooks)
     app.include_router(health.router)
     app.include_router(orders.router)
@@ -79,6 +79,8 @@ def _mount():
     app.include_router(webhooks.router)
     app.include_router(callbacks.router)
     app.include_router(internal.router)
+    # 示範商店。DEMO_CALLER_ID 沒設的話裡面每一支都回 404。
+    app.include_router(demo.router)
 
 
 _mount()

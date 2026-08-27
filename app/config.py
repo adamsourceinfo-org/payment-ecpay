@@ -51,6 +51,9 @@ class Settings:
     webhook_enqueue_timeout_seconds: float
     tasks_queue_prefix: str
     tasks_location: str
+    # 示範商店的 caller 身分。**沒設就整組 /demo 端點 404** ——
+    # 它只寫進 .cicd/env.dev，prod 沒有。見 app/routers/demo.py。
+    demo_caller_id: Optional[str]
     log_level: str
     db_instance: Optional[str]
     db_user: Optional[str]
@@ -190,6 +193,7 @@ def load_settings() -> Settings:
         tasks_queue_prefix=os.environ.get(
             "TASKS_QUEUE_PREFIX", "payment-ecpay-deliveries"),
         tasks_location=os.environ.get("TASKS_LOCATION", "asia-east1"),
+        demo_caller_id=_optional("DEMO_CALLER_ID"),
         log_level=os.environ.get("LOG_LEVEL", "info"),
         # 這三個由 CI 依部署目標推導注入，寫進 .cicd/env.* 會被 verify 擋下
         db_instance=os.environ.get("INSTANCE_CONNECTION_NAME") or None,

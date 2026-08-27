@@ -38,6 +38,7 @@ class FakeSettings:
     tasks_queue_prefix = "payment-ecpay-deliveries"
     tasks_location = "asia-east1"
     push_configured = True
+    demo_caller_id = None      # 預設關閉；要測 /demo 的自己開
     log_level = "debug"
     db_instance = "proj:region:inst"
     db_user = "run-runtime@proj.iam"
